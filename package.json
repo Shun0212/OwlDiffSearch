@@ -1,0 +1,189 @@
+{
+  "name": "owl-diff-search",
+  "displayName": "Owl Diff Search",
+  "description": "Search Git diffs by intent and open matching changes in VS Code's native diff editor.",
+  "publisher": "owl-diff-search-local",
+  "version": "0.1.0",
+  "license": "MIT",
+  "keywords": [
+    "git diff",
+    "semantic search",
+    "code review",
+    "unified diff",
+    "natural language",
+    "bm25"
+  ],
+  "engines": {
+    "vscode": "^1.100.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "AI",
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "icon": "media/owl.png",
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Owl Diff Search executes Git and a local Python model server in the open workspace."
+    }
+  },
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "owlDiffSearch",
+          "title": "Owl Diff Search",
+          "icon": "media/owl.svg"
+        }
+      ]
+    },
+    "views": {
+      "owlDiffSearch": [
+        {
+          "id": "owlDiffSearch.sidebar",
+          "name": "Git Diff Search",
+          "type": "webview",
+          "icon": "media/owl.svg"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "owlDiffSearch.open",
+        "title": "Owl Diff Search: Open"
+      },
+      {
+        "command": "owlDiffSearch.setupEnv",
+        "title": "Owl Diff Search: Setup Python Environment"
+      },
+      {
+        "command": "owlDiffSearch.startServer",
+        "title": "Owl Diff Search: Start Server"
+      },
+      {
+        "command": "owlDiffSearch.stopServer",
+        "title": "Owl Diff Search: Stop Server"
+      },
+      {
+        "command": "owlDiffSearch.cancelEmbedding",
+        "title": "Owl Diff Search: Cancel Indexing / Embedding"
+      },
+      {
+        "command": "owlDiffSearch.clearCache",
+        "title": "Owl Diff Search: Clear Cache"
+      },
+      {
+        "command": "owlDiffSearch.removeVenv",
+        "title": "Owl Diff Search: Remove Virtual Environment"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Owl Diff Search",
+      "properties": {
+        "owlDiffSearch.modelName": {
+          "type": "string",
+          "default": "Shuu12121/NightOwl-CodeEmbedding",
+          "description": "Hugging Face model used for semantic diff search."
+        },
+        "owlDiffSearch.batchSize": {
+          "type": "number",
+          "default": 2,
+          "minimum": 1,
+          "description": "Embedding batch size. Lower this if indexing uses too much memory."
+        },
+        "owlDiffSearch.cacheSettings": {
+          "type": "object",
+          "title": "Cache Settings",
+          "properties": {
+            "autoClearCache": {
+              "type": "boolean",
+              "default": false,
+              "description": "Clear the local semantic index when the server starts."
+            }
+          }
+        },
+        "owlDiffSearch.environmentSettings": {
+          "type": "object",
+          "title": "Python Environment",
+          "properties": {
+            "autoRemoveVenv": {
+              "type": "boolean",
+              "default": false,
+              "description": "Recreate the bundled virtual environment during setup."
+            },
+            "pythonVersion": {
+              "type": "string",
+              "default": "3.11",
+              "description": "Python version or interpreter path passed to uv."
+            }
+          }
+        },
+        "owlDiffSearch.enableJapaneseTranslation": {
+          "type": "boolean",
+          "default": false,
+          "description": "Translate Japanese queries to English with Gemini before semantic search."
+        },
+        "owlDiffSearch.geminiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Gemini API key used only when Japanese query translation is enabled."
+        },
+        "owlDiffSearch.geminiModel": {
+          "type": "string",
+          "default": "gemini-3.5-flash",
+          "enum": [
+            "gemini-3.5-flash",
+            "gemini-3.1-flash-lite",
+            "gemini-3.1-pro-preview"
+          ],
+          "description": "Gemini model used for Japanese query translation."
+        },
+        "owlDiffSearch.serverHost": {
+          "type": "string",
+          "default": "127.0.0.1",
+          "description": "Address used by the local diff-search server. Restart after changing it."
+        },
+        "owlDiffSearch.serverPort": {
+          "type": "number",
+          "default": 8765,
+          "minimum": 1024,
+          "maximum": 65535,
+          "description": "Preferred local server port. Nearby ports are tried automatically if it is busy."
+        },
+        "owlDiffSearch.autoStartServer": {
+          "type": "boolean",
+          "default": false,
+          "description": "Start the local search server when the extension activates."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "node --test scripts/*.test.cjs",
+    "test:extension": "vscode-test"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.100.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.10",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.9.2",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "@google/genai": "^1.4.0"
+  }
+}

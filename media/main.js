@@ -1,0 +1,754 @@
+(function () {
+  const vscode = acquireVsCodeApi();
+  const sessionId = String(window.OWL_WEBVIEW_SESSION_ID || '');
+  let currentResults = [];
+  let currentFolderPath = '';
+  let commitGraphData = [];
+  let commitGraphHasMore = true;
+  let commitGraphLoading = false;
+  let commitGraphRequestId = 0;
+  let commitGraphError = '';
+  let translationRequestId = 0;
+  let progressWasActive = false;
+  let searchInFlight = false;
+
+  const byId = (id) => document.getElementById(id);
+
+  function escapeHtml(value) {
+    return String(value ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  function shortRef(value) {
+    const ref = String(value || '').trim();
+    return /^[0-9a-f]{12,40}$/i.test(ref) ? ref.slice(0, 7) : ref;
+  }
+
+  function rangeText() {
+    const base = shortRef(byId('diffBaseRefInput')?.value || '');
+    const head = shortRef(byId('diffHeadRefInput')?.value || '');
+    if (base && head) return `${base} → ${head}`;
+    if (base) return `${base} → HEAD`;
+    return 'HEAD → working tree';
+  }
+
+  function updateRange() {
+    const value = rangeText();
+    const bar = byId('diffRangeBar');
+    const summary = byId('rangeSummary');
+    if (bar) bar.textContent = `Diff range: ${value}`;
+    if (summary) summary.textContent = value;
+    highlightCommitSelection();
+  }
+
+  function collectState() {
+    return {
+      sessionId,
+      query: byId('searchInput')?.value || '',
+      searchMode: byId('searchModeSelect')?.value || 'semantic',
+      searchTarget: byId('searchTargetSelect')?.value || 'diff_hunks',
+      includePatterns: byId('includePatternsInput')?.value || '',
+      excludePatterns: byId('excludePatternsInput')?.value || '',
+      diffBaseRef: byId('diffBaseRefInput')?.value || '',
+      diffHeadRef: byId('diffHeadRefInput')?.value || '',
+    };
+  }
+
+  function saveState() {
+    const state = collectState();
+    vscode.setState(state);
+    vscode.postMessage({ command: 'persistState', state });
+  }
+
+  function restoreState(state) {
+    if (!state || typeof state !== 'object') return;
+    const fields = [
+      ['searchInput', 'query'],
+      ['searchModeSelect', 'searchMode'],
+      ['searchTargetSelect', 'searchTarget'],
+      ['includePatternsInput', 'includePatterns'],
+      ['excludePatternsInput', 'excludePatterns'],
+      ['diffBaseRefInput', 'diffBaseRef'],
+      ['diffHeadRefInput', 'diffHeadRef'],
+    ];
+    fields.forEach(([id, key]) => {
+      const element = byId(id);
+      if (element && typeof state[key] === 'string') element.value = state[key];
+    });
+    syncSegmentedControls();
+    updateTargetFilterSummary();
+    updateRange();
+  }
+
+  function splitPatterns(value) {
+    return String(value || '').split(/[,\n]/).map((part) => part.trim()).filter(Boolean);
+  }
+
+  function updateTargetFilterSummary() {
+    const includeCount = splitPatterns(byId('includePatternsInput')?.value).length;
+    const excludeCount = splitPatterns(byId('excludePatternsInput')?.value).length;
+    const summary = byId('targetFilterSummary');
+    if (!summary) return;
+    const parts = [];
+    if (includeCount) parts.push(`Include ${includeCount}`);
+    if (excludeCount) parts.push(`Exclude ${excludeCount}`);
+    summary.textContent = parts.length ? parts.join(' · ') : 'All supported files';
+  }
+
+  function setServerStatus(online, detail) {
+    const status = byId('serverStatus');
+    const text = byId('serverStatusText');
+    status?.classList.toggle('online', Boolean(online));
+    status?.classList.toggle('offline', !online);
+    if (text) text.textContent = online ? `Online${detail ? ` (${detail})` : ''}` : 'Offline';
+    if (!online && progressWasActive) {
+      progressWasActive = false;
+      searchInFlight = false;
+      setStatus('Server stopped before embedding completed.', false);
+    }
+  }
+
+  function setStatus(message, busy) {
+    const status = byId('status');
+    const cancel = byId('cancelEmbeddingBtn');
+    if (status) {
+      delete status.dataset.view;
+      status.setAttribute('aria-busy', busy ? 'true' : 'false');
+      status.innerHTML = busy
+        ? `<span class="loading-spinner"></span><span class="loading-msg">${escapeHtml(message)}</span>`
+        : escapeHtml(message);
+    }
+    if (cancel) cancel.hidden = !busy;
+  }
+
+  function formatDuration(seconds) {
+    if (!Number.isFinite(seconds) || seconds < 0) return '';
+    const rounded = Math.round(seconds);
+    if (rounded < 60) return `${rounded}s`;
+    return `${Math.floor(rounded / 60)}m${rounded % 60 ? `${rounded % 60}s` : ''}`;
+  }
+
+  function applyIndexProgress(progress) {
+    const cancel = byId('cancelEmbeddingBtn');
+    if (!progress?.active || !progress.total) {
+      if (progressWasActive) {
+        progressWasActive = false;
+        const rankingUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+        setStatus(searchInFlight ? `Ranking ${rankingUnit}…` : '', false);
+      } else if (cancel && !searchInFlight) {
+        cancel.hidden = true;
+      }
+      return;
+    }
+    progressWasActive = true;
+    const percent = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)));
+    const timing = [];
+    const elapsed = formatDuration(progress.elapsed);
+    const eta = formatDuration(progress.eta);
+    if (elapsed) timing.push(elapsed);
+    if (eta) timing.push(`ETA ${eta}`);
+    const progressUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+    const progressPhase = !progress.phase || progress.phase === 'Embedding'
+      ? `Embedding ${progressUnit}`
+      : progress.phase;
+    const isDeterminate = !/^Loading\b/i.test(progressPhase);
+    const countText = isDeterminate ? ` ${progress.current}/${progress.total} (${percent}%)` : '';
+    const timingText = timing.length ? ` · ${timing.join(', ')}` : '';
+    const status = byId('status');
+    if (status) {
+      status.setAttribute('aria-busy', 'true');
+      if (status.dataset.view !== 'index-progress') {
+        status.innerHTML =
+          '<span class="loading-spinner"></span>' +
+          '<span class="loading-msg index-progress-message"></span>' +
+          '<div class="owl-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100">' +
+          '<div class="owl-progress-bar"></div>' +
+          '</div>';
+        status.dataset.view = 'index-progress';
+      }
+
+      const messageElement = status.querySelector('.index-progress-message');
+      const progressTrack = status.querySelector('.owl-progress');
+      const progressBar = status.querySelector('.owl-progress-bar');
+      if (messageElement) messageElement.textContent = `${progressPhase}${countText}${timingText}`;
+      if (progressTrack) {
+        progressTrack.setAttribute('aria-label', progressPhase);
+        if (isDeterminate) {
+          progressTrack.setAttribute('aria-valuenow', String(percent));
+          progressTrack.removeAttribute('aria-valuetext');
+        } else {
+          progressTrack.removeAttribute('aria-valuenow');
+          progressTrack.setAttribute('aria-valuetext', progressPhase);
+        }
+      }
+      if (progressBar) {
+        progressBar.classList.toggle('determinate', isDeterminate);
+        progressBar.classList.toggle('active', isDeterminate);
+        if (isDeterminate) progressBar.style.width = `${percent}%`;
+        else progressBar.style.removeProperty('width');
+      }
+    }
+    if (cancel) cancel.hidden = false;
+  }
+
+  function syncSegmentedControl(control) {
+    const select = byId(control.getAttribute('data-select'));
+    if (!select) return;
+    control.querySelectorAll('.segment-btn').forEach((button) => {
+      button.classList.toggle('active', button.getAttribute('data-value') === select.value);
+    });
+  }
+
+  function syncSegmentedControls() {
+    document.querySelectorAll('.segmented-control').forEach(syncSegmentedControl);
+  }
+
+  function bindSegmentedControls() {
+    document.querySelectorAll('.segmented-control').forEach((control) => {
+      const select = byId(control.getAttribute('data-select'));
+      if (!select) return;
+      control.querySelectorAll('.segment-btn').forEach((button) => {
+        button.addEventListener('click', () => {
+          select.value = button.getAttribute('data-value') || select.value;
+          syncSegmentedControl(control);
+          select.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+      syncSegmentedControl(control);
+    });
+  }
+
+  function translationSettings() {
+    return {
+      enable: Boolean(byId('translateToggle')?.checked),
+      model: byId('geminiModelSelect')?.value || 'gemini-3.5-flash',
+    };
+  }
+
+  function updateTranslationSummary() {
+    const summary = byId('translationSummary');
+    if (!summary) return;
+    const settings = translationSettings();
+    summary.textContent = settings.enable ? `On · ${settings.model.replace(/^gemini-/, '')}` : 'Off';
+  }
+
+  function updateTranslationSettings(partial) {
+    translationRequestId += 1;
+    vscode.postMessage({
+      command: 'updateTranslationSettings',
+      requestId: translationRequestId,
+      ...partial,
+    });
+  }
+
+  const COMMIT_PAGE_SIZE = 200;
+
+  function requestGitCommits(options = {}) {
+    const append = Boolean(options.append);
+    if (commitGraphLoading || (append && !commitGraphHasMore)) return;
+
+    const graph = byId('commitGraph');
+    if (!append) {
+      commitGraphData = [];
+      commitGraphHasMore = true;
+      commitGraphError = '';
+      if (graph) graph.innerHTML = '<div class="commit-graph-empty">Loading commits…</div>';
+    }
+    commitGraphLoading = true;
+    commitGraphRequestId += 1;
+    if (append) renderCommitGraph(commitGraphData);
+    vscode.postMessage({
+      command: 'getGitCommits',
+      limit: COMMIT_PAGE_SIZE,
+      offset: append ? commitGraphData.length : 0,
+      requestId: commitGraphRequestId,
+    });
+  }
+
+  const COMMIT_LANE_WIDTH = 14;
+  const COMMIT_ROW_HEIGHT = 30;
+  const COMMIT_COLORS = ['#4f9cff', '#22b07d', '#e0a23a', '#d05ce3', '#ef5e7a', '#39bcc4', '#9b8cff'];
+
+  function laneColor(column) {
+    return COMMIT_COLORS[((column % COMMIT_COLORS.length) + COMMIT_COLORS.length) % COMMIT_COLORS.length];
+  }
+
+  function computeCommitLayout(commits) {
+    const columns = new Map();
+    const lanes = [];
+    let maxLanes = 1;
+    commits.forEach((commit) => {
+      let column = lanes.indexOf(commit.hash);
+      if (column < 0) {
+        column = lanes.indexOf(null);
+        if (column < 0) {
+          column = lanes.length;
+          lanes.push(null);
+        }
+      }
+      columns.set(commit.hash, column);
+      lanes.forEach((hash, index) => {
+        if (index !== column && hash === commit.hash) lanes[index] = null;
+      });
+      const parents = Array.isArray(commit.parents) ? commit.parents : [];
+      lanes[column] = parents[0] || null;
+      parents.slice(1).forEach((parent) => {
+        if (!lanes.includes(parent)) {
+          const free = lanes.indexOf(null);
+          if (free < 0) lanes.push(parent);
+          else lanes[free] = parent;
+        }
+      });
+      while (lanes.length && lanes[lanes.length - 1] === null) lanes.pop();
+      maxLanes = Math.max(maxLanes, lanes.length, column + 1);
+    });
+    return { columns, maxLanes };
+  }
+
+  function svgElement(name, attributes) {
+    const element = document.createElementNS('http://www.w3.org/2000/svg', name);
+    Object.entries(attributes).forEach(([key, value]) => element.setAttribute(key, String(value)));
+    return element;
+  }
+
+  function renderCommitGraph(commits) {
+    const container = byId('commitGraph');
+    if (!container) return;
+    const previousScrollTop = container.scrollTop;
+    container.innerHTML = '';
+    if (!commits.length) {
+	  const emptyMessage = commitGraphLoading ? 'Loading commits…' : (commitGraphError || 'No commits found.');
+	  container.innerHTML = `<div class="commit-graph-empty">${escapeHtml(emptyMessage)}</div>`;
+      return;
+    }
+
+    const indexOf = new Map(commits.map((commit, index) => [commit.hash, index]));
+    const { columns, maxLanes } = computeCommitLayout(commits);
+    const graphWidth = maxLanes * COMMIT_LANE_WIDTH + 8;
+    const height = commits.length * COMMIT_ROW_HEIGHT;
+    const x = (column) => column * COMMIT_LANE_WIDTH + COMMIT_LANE_WIDTH / 2 + 4;
+    const y = (index) => index * COMMIT_ROW_HEIGHT + COMMIT_ROW_HEIGHT / 2;
+    const svg = svgElement('svg', { class: 'commit-graph-svg', width: graphWidth, height });
+
+    commits.forEach((commit, index) => {
+      const column = columns.get(commit.hash) || 0;
+      (commit.parents || []).forEach((parentHash) => {
+        if (!indexOf.has(parentHash)) return;
+        const parentIndex = indexOf.get(parentHash);
+        const parentColumn = columns.get(parentHash) || 0;
+        const startX = x(column);
+        const startY = y(index);
+        const endX = x(parentColumn);
+        const endY = y(parentIndex);
+        const midY = (startY + endY) / 2;
+        const d = startX === endX
+          ? `M ${startX} ${startY} L ${endX} ${endY}`
+          : `M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}`;
+        svg.appendChild(svgElement('path', { d, fill: 'none', stroke: laneColor(Math.max(column, parentColumn)), 'stroke-width': 1.6 }));
+      });
+    });
+    commits.forEach((commit, index) => {
+      const column = columns.get(commit.hash) || 0;
+      svg.appendChild(svgElement('circle', { cx: x(column), cy: y(index), r: 4, fill: laneColor(column), class: 'commit-node' }));
+    });
+
+    const rows = document.createElement('div');
+    rows.className = 'commit-rows';
+    rows.style.marginLeft = `${graphWidth}px`;
+    commits.forEach((commit) => {
+      const row = document.createElement('button');
+      row.type = 'button';
+      row.className = 'commit-row';
+      row.style.height = `${COMMIT_ROW_HEIGHT}px`;
+      row.dataset.hash = commit.hash;
+      row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\nClick: Base · Shift+Click: Head`;
+      const refs = (commit.refs || []).map((ref) => `<span class="commit-ref">${escapeHtml(ref.replace(/^HEAD -> /, ''))}</span>`).join('');
+      row.innerHTML =
+        `<span class="commit-hash">${escapeHtml(commit.short)}</span>` +
+        refs +
+        `<span class="commit-subject">${escapeHtml(commit.subject)}</span>` +
+        `<span class="commit-meta">${escapeHtml(commit.date)}</span>` +
+        '<span class="commit-badge commit-badge-base">Base</span>' +
+        '<span class="commit-badge commit-badge-head">Head</span>';
+      row.addEventListener('click', (event) => {
+        const input = byId(event.shiftKey ? 'diffHeadRefInput' : 'diffBaseRefInput');
+        if (!input) return;
+        input.value = input.value === commit.hash ? '' : commit.hash;
+        input.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+      rows.appendChild(row);
+    });
+
+    const layout = document.createElement('div');
+    layout.className = 'commit-graph-layout';
+    layout.style.height = `${height}px`;
+    svg.style.position = 'absolute';
+    svg.style.inset = '0 auto auto 0';
+    layout.append(svg, rows);
+    container.appendChild(layout);
+
+    const footer = document.createElement('div');
+    footer.className = 'commit-graph-footer';
+    if (commitGraphError) {
+      footer.textContent = commitGraphError;
+      footer.classList.add('is-error');
+    } else if (commitGraphLoading) {
+      footer.textContent = 'Loading older commits…';
+    } else if (commitGraphHasMore) {
+      const loadMoreButton = document.createElement('button');
+      loadMoreButton.type = 'button';
+      loadMoreButton.className = 'commit-load-more';
+      loadMoreButton.textContent = `Load older commits (${commits.length} loaded)`;
+      loadMoreButton.addEventListener('click', () => requestGitCommits({ append: true }));
+      footer.appendChild(loadMoreButton);
+    } else {
+      footer.textContent = `End of local history · ${commits.length} commits`;
+    }
+    container.appendChild(footer);
+    container.scrollTop = previousScrollTop;
+    highlightCommitSelection();
+  }
+
+  function matchesRef(ref, hash) {
+    return Boolean(ref && hash && (ref === hash || (ref.length >= 4 && hash.startsWith(ref))));
+  }
+
+  function highlightCommitSelection() {
+    const base = byId('diffBaseRefInput')?.value.trim() || '';
+    const head = byId('diffHeadRefInput')?.value.trim() || '';
+    document.querySelectorAll('#commitGraph .commit-row').forEach((row) => {
+      const hash = row.getAttribute('data-hash') || '';
+      row.classList.toggle('is-base', matchesRef(base, hash));
+      row.classList.toggle('is-head', matchesRef(head, hash));
+    });
+  }
+
+  function requestPrepareDiff() {
+    const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
+    const unitLabel = searchTarget === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+    if (byId('diffStatus')) byId('diffStatus').textContent = `Checking ${unitLabel}…`;
+    vscode.postMessage({
+      command: 'prepareDiffSearch',
+      lang: 'auto',
+      scope: 'changed',
+      searchMode: byId('searchModeSelect')?.value || 'semantic',
+      searchTarget,
+      includePatterns: byId('includePatternsInput')?.value || '',
+      excludePatterns: byId('excludePatternsInput')?.value || '',
+      diffBaseRef: byId('diffBaseRefInput')?.value || '',
+      diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      force: false,
+    });
+  }
+
+  function runSearch() {
+    const query = byId('searchInput')?.value.trim() || '';
+    if (!query) {
+      setStatus('Enter a query first.', false);
+      byId('searchInput')?.focus();
+      return;
+    }
+    searchInFlight = true;
+    const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
+    setStatus(searchTarget === 'diff_commits' ? 'Searching commit diffs…' : 'Searching diff hunks…', true);
+    byId('emptyState')?.setAttribute('hidden', '');
+    const translation = translationSettings();
+    vscode.postMessage({
+      command: 'search',
+      text: query,
+      lang: 'auto',
+      scope: 'changed',
+      searchMode: byId('searchModeSelect')?.value || 'semantic',
+      searchTarget,
+      includePatterns: byId('includePatternsInput')?.value || '',
+      excludePatterns: byId('excludePatternsInput')?.value || '',
+      diffBaseRef: byId('diffBaseRefInput')?.value || '',
+      diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      translateEnabled: translation.enable,
+      geminiModel: translation.model,
+    });
+    saveState();
+  }
+
+  function relativePath(file) {
+    const normalizedFile = String(file || '').replace(/\\/g, '/');
+    const normalizedRoot = String(currentFolderPath || '').replace(/\\/g, '/').replace(/\/$/, '');
+    return normalizedRoot && normalizedFile.startsWith(`${normalizedRoot}/`)
+      ? normalizedFile.slice(normalizedRoot.length + 1)
+      : normalizedFile;
+  }
+
+  function scorePercent(value) {
+    return typeof value === 'number' && Number.isFinite(value)
+      ? Math.round(Math.max(0, Math.min(1, value)) * 100)
+      : null;
+  }
+
+  function openResultDiff(result, file, line) {
+    const commitHash = String(result.commit_hash || '').trim();
+    vscode.postMessage({
+      command: 'openDiff',
+      file,
+      line,
+      baseRef: commitHash ? `${commitHash}^` : (byId('diffBaseRefInput')?.value || ''),
+      headRef: commitHash || (byId('diffHeadRefInput')?.value || ''),
+      oldPath: result.diff_old_path || '',
+      newPath: result.diff_new_path || '',
+    });
+  }
+
+  function resultTitle(result, file, line) {
+    if (result.symbol_kind === 'diff_commit') {
+      return result.commit_subject || result.function_name || result.name || 'Working tree changes';
+    }
+    if (result.symbol_kind === 'diff_hunk') return `${relativePath(file) || 'Diff hunk'}:${line}`;
+    const name = result.function_name || result.name || 'Changed function';
+    return result.class_name ? `${result.class_name}.${name}` : name;
+  }
+
+  function resultContext(result, isCommitDiff) {
+    if (!isCommitDiff) return result.commit_subject || '';
+    const parts = [];
+    if (result.commit_hash) parts.push(shortRef(result.commit_hash));
+    if (Number.isFinite(result.commit_file_count)) {
+      parts.push(`${result.commit_file_count} files · ${result.commit_hunk_count || 0} hunks`);
+    }
+    return parts.join(' · ');
+  }
+
+  function renderResults(results, folderPath, meta) {
+    searchInFlight = false;
+    currentResults = Array.isArray(results) ? results : [];
+    currentFolderPath = folderPath || currentFolderPath;
+    const container = byId('results');
+    if (!container) return;
+    container.innerHTML = '';
+
+    if (!currentResults.length) {
+      container.innerHTML =
+        '<div class="empty-state" id="emptyState">' +
+        '<div class="empty-title">No matching changes</div>' +
+        '<div class="empty-hint">Check the language and compare range, or try another query.</div>' +
+        '</div>';
+      const cacheSuffix = meta?.diff_embedding_cache_hit ? ' · cached embeddings' : '';
+      setStatus(`0 results${cacheSuffix}`, false);
+      return;
+    }
+
+    const cacheSource = meta?.diff_embedding_cache_source;
+    const cacheSuffix = cacheSource === 'memory' || cacheSource === 'disk'
+      ? ' · cached embeddings'
+      : cacheSource === 'fresh' ? ' · embeddings saved' : '';
+    setStatus(`${currentResults.length} result${currentResults.length === 1 ? '' : 's'}${cacheSuffix}`, false);
+    currentResults.forEach((result, index) => {
+      const card = document.createElement('article');
+      const isCommitDiff = result.symbol_kind === 'diff_commit';
+      const isDiff = result.symbol_kind === 'diff_hunk' || isCommitDiff;
+      card.className = `result-item${isDiff ? ' diff-item' : ''}`;
+      const file = result.file_path || result.file || '';
+      const line = Number(result.lineno || result.line_number || 1);
+      const rankScore = result.hybrid_score ?? result.score ?? result.similarity;
+      const score = scorePercent(rankScore);
+      const context = resultContext(result, isCommitDiff);
+      card.innerHTML =
+        '<div class="result-header">' +
+        `<span class="result-rank${index < 3 ? ' rank-top' : ''}">${index + 1}</span>` +
+        '<div class="result-heading">' +
+        `<div class="function-name">${escapeHtml(resultTitle(result, file, line))}</div>` +
+        (context ? `<div class="result-context">${escapeHtml(context)}</div>` : '') +
+        '</div>' +
+        (score === null ? '' : `<span class="score-badge" title="Match score">${score}%</span>`) +
+        '</div>';
+
+      card.addEventListener('click', () => openResultDiff(result, file, line));
+
+      const commitFiles = Array.isArray(result.commit_hunks) ? result.commit_hunks : [];
+      if (commitFiles.length > 1) {
+        const details = document.createElement('details');
+        details.className = 'diff-commit-files';
+        details.innerHTML = `<summary>Files in this commit (${commitFiles.length})</summary>`;
+        commitFiles.forEach((entry) => {
+          const fileButton = document.createElement('button');
+          fileButton.type = 'button';
+          fileButton.className = `diff-commit-hunk-head${entry.is_representative ? ' representative' : ''}`;
+          fileButton.textContent = entry.path || relativePath(entry.file_path || file);
+          fileButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openResultDiff({
+              ...result,
+              diff_old_path: entry.diff_old_path || '',
+              diff_new_path: entry.diff_new_path || '',
+            }, entry.file_path || file, Number(entry.lineno || 1));
+          });
+          details.appendChild(fileButton);
+        });
+        card.appendChild(details);
+      }
+
+      const actions = document.createElement('div');
+      actions.className = 'diff-result-actions';
+      const openButton = document.createElement('button');
+      openButton.type = 'button';
+      openButton.className = 'diff-action-btn open-diff-action';
+      openButton.textContent = 'Open Diff';
+      openButton.addEventListener('click', (event) => {
+        event.stopPropagation();
+        openResultDiff(result, file, line);
+      });
+      actions.appendChild(openButton);
+      if (result.commit_hash) {
+        const commitButton = document.createElement('button');
+        commitButton.type = 'button';
+        commitButton.className = 'diff-action-btn open-commit-action';
+        commitButton.textContent = 'Open Commit';
+        commitButton.addEventListener('click', (event) => {
+          event.stopPropagation();
+          vscode.postMessage({ command: 'openCommitRemote', hash: result.commit_hash });
+        });
+        actions.appendChild(commitButton);
+      }
+      card.appendChild(actions);
+      container.appendChild(card);
+    });
+  }
+
+  function bindEvents() {
+    bindSegmentedControls();
+    byId('setupAndStartBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'setupAndStart' }));
+    byId('stopServerBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'stopServer' }));
+    byId('cancelEmbeddingBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'cancelEmbedding' }));
+    byId('searchBtn')?.addEventListener('click', runSearch);
+    byId('searchInput')?.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter') runSearch();
+    });
+    byId('refreshDiffSearchBtn')?.addEventListener('click', requestPrepareDiff);
+    byId('reloadCommitsBtn')?.addEventListener('click', () => requestGitCommits());
+    byId('commitGraph')?.addEventListener('scroll', (event) => {
+      const graph = event.currentTarget;
+      if (!(graph instanceof HTMLElement)) return;
+      const distanceFromBottom = graph.scrollHeight - graph.scrollTop - graph.clientHeight;
+      if (distanceFromBottom <= 64) requestGitCommits({ append: true });
+    });
+    ['searchModeSelect', 'searchTargetSelect'].forEach((id) => {
+      byId(id)?.addEventListener('change', () => {
+        syncSegmentedControls();
+        saveState();
+      });
+    });
+    ['diffBaseRefInput', 'diffHeadRefInput'].forEach((id) => {
+      byId(id)?.addEventListener('input', updateRange);
+      byId(id)?.addEventListener('change', () => {
+        updateRange();
+        saveState();
+      });
+    });
+    ['includePatternsInput', 'excludePatternsInput'].forEach((id) => {
+      byId(id)?.addEventListener('input', updateTargetFilterSummary);
+      byId(id)?.addEventListener('change', saveState);
+    });
+    byId('translateToggle')?.addEventListener('change', () => {
+      updateTranslationSummary();
+      updateTranslationSettings({ enable: Boolean(byId('translateToggle').checked) });
+    });
+    byId('geminiModelSelect')?.addEventListener('change', () => {
+      updateTranslationSummary();
+      updateTranslationSettings({ model: byId('geminiModelSelect').value });
+    });
+  }
+
+  window.addEventListener('message', (event) => {
+    const message = event.data || {};
+    if (message.type === 'initState') {
+      restoreState(message.state);
+      return;
+    }
+    if (message.type === 'translationSettings') {
+      const toggle = byId('translateToggle');
+      const model = byId('geminiModelSelect');
+      if (toggle) toggle.checked = Boolean(message.enable);
+      if (model && typeof message.model === 'string') model.value = message.model;
+      updateTranslationSummary();
+      return;
+    }
+    if (message.type === 'translatedQuery') {
+      const translated = byId('translatedQuery');
+      if (!translated) return;
+      if (message.original && message.translated && message.original !== message.translated) {
+        translated.innerHTML = `Translated: <strong>${escapeHtml(message.translated)}</strong>`;
+        translated.hidden = false;
+      } else {
+        translated.hidden = true;
+      }
+      return;
+    }
+    if (message.type === 'serverStatus') {
+      setServerStatus(message.online, message.port || '');
+      return;
+    }
+    if (message.type === 'indexProgress') {
+      applyIndexProgress(message.progress);
+      return;
+    }
+    if (message.type === 'gitCommits') {
+      if (typeof message.requestId === 'number' && message.requestId !== commitGraphRequestId) return;
+      const incoming = Array.isArray(message.commits) ? message.commits : [];
+      if (message.append) {
+        const knownHashes = new Set(commitGraphData.map((commit) => commit.hash));
+        commitGraphData = commitGraphData.concat(incoming.filter((commit) => !knownHashes.has(commit.hash)));
+      } else {
+        commitGraphData = incoming;
+      }
+      commitGraphLoading = false;
+      commitGraphHasMore = Boolean(message.hasMore);
+      commitGraphError = typeof message.error === 'string' ? message.error : '';
+      renderCommitGraph(commitGraphData);
+      return;
+    }
+    if (message.type === 'diffPrepared') {
+      const data = message.data || {};
+      const status = byId('diffStatus');
+      const unitLabel = data.search_target === 'diff_commits' ? 'commits' : 'hunks';
+      const unitCount = data.num_diff_units ?? data.num_diff_hunks ?? 0;
+      const source = data.diff_embedding_cache_source;
+      const embeddingState = source === 'memory' || source === 'disk'
+        ? `cached (${source})`
+        : source === 'fresh' ? 'saved' : source;
+      if (status) status.textContent = `${unitCount} ${unitLabel} / ${data.num_files || 0} files · embeddings ${embeddingState || 'ready'}`;
+      return;
+    }
+    if (message.type === 'diffPrepareError') {
+      const status = byId('diffStatus');
+      if (status) status.textContent = message.message || 'Failed to prepare the diff.';
+      return;
+    }
+    if (message.type === 'status') {
+      const statusMessage = message.message || '';
+      const finished = /cancelled|completed|failed|ready/i.test(statusMessage);
+      const busy = !finished && /searching|indexing|embedding|setting up|starting|checking|cancelling|cancellation requested/i.test(statusMessage);
+      setStatus(statusMessage, busy);
+      return;
+    }
+    if (message.type === 'error') {
+      searchInFlight = false;
+      setStatus(message.message || 'An error occurred.', false);
+      return;
+    }
+    if (message.type === 'results') {
+      renderResults(message.results, message.folderPath || '', message.meta || {});
+    }
+  });
+
+  bindEvents();
+  restoreState(vscode.getState());
+  updateRange();
+  updateTargetFilterSummary();
+  updateTranslationSummary();
+  requestGitCommits();
+  vscode.postMessage({ command: 'requestInitState' });
+  vscode.postMessage({ command: 'requestTranslationSettings' });
+  vscode.postMessage({ command: 'checkServerStatus' });
+})();

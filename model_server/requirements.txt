@@ -1,0 +1,4 @@
+# Default dependency set used by the Owl Diff Search Python server.
+# The base dependencies live in requirements/base.txt.  Torch is split out so GPU builds can override it.
+-r requirements/base.txt
+-r requirements/torch-cpu.txt
