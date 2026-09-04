@@ -40,7 +40,6 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 OWL_INDEX_DIR = ".owl_index"
 DEFAULT_BATCH_SIZE = 2
-SUPPORTED_DIFF_EXTENSIONS = (".py", ".java", ".ts", ".tsx", ".js", ".jsx")
 model_name = os.environ.get("OWL_MODEL_NAME", DEFAULT_MODEL)
 
 
@@ -619,7 +618,10 @@ def collect_diff_hunks(
             return False
         normalized_path = rel_path.lower()
         if requested_extension in {"auto", "all", "*"}:
-            language_matches = normalized_path.endswith(SUPPORTED_DIFF_EXTENSIONS)
+            # The default search scope is every textual Git diff, regardless
+            # of its filename or extension. Binary patches do not contain @@
+            # hunks and are therefore skipped naturally by the parser.
+            language_matches = True
         else:
             language_matches = normalized_path.endswith(requested_extension)
         if not language_matches:

@@ -338,23 +338,40 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
             )
             self.assertTrue(all(unit["search_unit"] == "diff_commit" for unit in state.units))
 
-    def test_auto_language_collects_every_supported_diff_language(self):
+    def test_auto_collects_all_text_files_and_skips_binary_files(self):
         with tempfile.TemporaryDirectory() as root:
             repo = self.create_changed_repository(root)
             (repo / "client.js").write_text(
                 "export function status() { return 'ready'; }\n",
                 encoding="utf-8",
             )
+            (repo / "package.json").write_text(
+                '{"dependencies":{"safe-parser":"2.0.0"}}\n',
+                encoding="utf-8",
+            )
+            (repo / "requirements.txt").write_text("safe-parser==2.0.0\n", encoding="utf-8")
+            (repo / "README.md").write_text("# Security update\n", encoding="utf-8")
+            (repo / "Dockerfile").write_text("FROM python:3.13\n", encoding="utf-8")
+            (repo / "image.bin").write_bytes(b"\x00\x01\x02\x03")
 
             hunks, file_count, _base, _head = server.collect_diff_hunks(
                 str(repo), "auto", None, None, None, "", ""
             )
 
-            self.assertEqual(file_count, 2)
-            self.assertEqual({hunk["path"] for hunk in hunks}, {"sample.py", "client.js"})
+            expected_paths = {
+                "sample.py",
+                "client.js",
+                "package.json",
+                "requirements.txt",
+                "README.md",
+                "Dockerfile",
+            }
+            self.assertEqual(file_count, len(expected_paths))
+            self.assertEqual({hunk["path"] for hunk in hunks}, expected_paths)
+            self.assertNotIn("image.bin", {hunk["path"] for hunk in hunks})
 
             python_hunks, python_file_count, _base, _head = server.collect_diff_hunks(
-                str(repo), "auto", None, ["*.py"], None, "", ""
+                str(repo), ".py", None, None, None, "", ""
             )
             self.assertEqual(python_file_count, 1)
             self.assertEqual({hunk["path"] for hunk in python_hunks}, {"sample.py"})

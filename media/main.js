@@ -122,7 +122,7 @@
     const parts = [];
     if (includeCount) parts.push(`Include ${includeCount}`);
     if (excludeCount) parts.push(`Exclude ${excludeCount}`);
-    summary.textContent = parts.length ? parts.join(' · ') : 'All supported files';
+    summary.textContent = parts.length ? parts.join(' · ') : 'All text files';
   }
 
   function setServerStatus(online, detail) {

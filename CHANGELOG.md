@@ -9,3 +9,4 @@
 - Collapsible branch count, branch scope, and first-parent history filters
 - Per-file diff grouping with max-file scoring for commit search
 - Stable indexing progress animation
+- Search all textual Git diffs by default, including manifests, lockfiles, documentation, and extensionless files

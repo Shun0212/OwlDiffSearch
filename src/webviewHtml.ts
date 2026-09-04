@@ -76,7 +76,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
 
     <section class="diff-control-card" aria-label="Diff search options">
       <div class="option-row compact-row">
-        <span>Detected languages</span>
+        <span>Detected code languages</span>
         <div class="detected-languages" id="detectedLanguages">${detectedLanguageBadges}</div>
       </div>
 
@@ -111,7 +111,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <details class="option-panel target-filter-panel" id="targetFilterPanel">
         <summary>
           <span>Target filters</span>
-          <span class="option-summary" id="targetFilterSummary">All supported files</span>
+          <span class="option-summary" id="targetFilterSummary">All text files</span>
         </summary>
         <div class="target-filter-body">
           <label>
@@ -122,7 +122,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
             <span>Exclude</span>
             <input id="excludePatternsInput" type="text" spellcheck="false" placeholder="tests/**, docs/**">
           </label>
-          <div class="filter-note">Comma-separated repository paths or globs. Leave blank to search all detected languages.</div>
+          <div class="filter-note">Comma-separated repository paths or globs. Leave blank to search all text-file diffs.</div>
         </div>
       </details>
 

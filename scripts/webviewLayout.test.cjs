@@ -94,10 +94,12 @@ test('keeps the standalone UI English-first with hunk and commit diff units', ()
   assert.match(htmlBuilder, /data-value="diff_hunks">Hunks</);
   assert.match(htmlBuilder, /data-value="diff_commits">Commits</);
   assert.match(script, /searchTarget:\s*byId\('searchTargetSelect'\).*'diff_hunks'/);
-  assert.match(htmlBuilder, />Detected languages</);
+  assert.match(htmlBuilder, />Detected code languages</);
   assert.doesNotMatch(htmlBuilder, /<select id="languageSelect"/);
   assert.match(script, /lang:\s*'auto'/);
   assert.match(htmlBuilder, />Target filters</);
+  assert.match(htmlBuilder, />All text files</);
+  assert.match(htmlBuilder, /search all text-file diffs/);
   assert.match(htmlBuilder, /id="includePatternsInput"/);
   assert.match(htmlBuilder, /id="excludePatternsInput"/);
   assert.match(script, /includePatterns:/);
