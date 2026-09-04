@@ -67,7 +67,12 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <button id="searchBtn">Search</button>
     </div>
 
-    <div id="diffRangeBar" class="diff-range-bar">Diff range: HEAD → working tree</div>
+    <div id="diffRangeBar" class="diff-range-bar" aria-label="Active diff range">
+      <span class="diff-range-bar-label">Active range</span>
+      <span id="activeBaseRef" class="active-range-ref active-range-base">HEAD</span>
+      <span class="active-range-arrow" aria-hidden="true">→</span>
+      <span id="activeHeadRef" class="active-range-ref active-range-head">working tree</span>
+    </div>
 
     <section class="diff-control-card" aria-label="Diff search options">
       <div class="option-row compact-row">
@@ -99,7 +104,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
         </div>
         <select id="searchTargetSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
           <option value="diff_hunks" selected>Unified diff hunks</option>
-          <option value="diff_commits">Full commit diffs</option>
+          <option value="diff_commits">Commits scored by best file diff</option>
         </select>
       </div>
 
@@ -127,19 +132,70 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
           <span class="option-summary" id="rangeSummary">HEAD → working tree</span>
         </summary>
         <div class="diff-options">
-          <label>
-            <span>Base</span>
-            <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="blank = HEAD">
-          </label>
-          <label>
-            <span>Head</span>
-            <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="blank = working tree">
-          </label>
+          <div class="range-editor" aria-label="Compare range endpoints">
+            <div class="range-editor-heading">
+              <span>Range endpoints</span>
+              <span>Base → Head</span>
+            </div>
+            <label class="range-endpoint range-endpoint-base" for="diffBaseRefInput">
+              <span class="range-endpoint-badge">BASE</span>
+              <span class="range-endpoint-body">
+                <span class="range-endpoint-title">Start from</span>
+                <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="baseEndpointHint">
+                <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set Base</span>
+              </span>
+            </label>
+            <div class="range-endpoint-connector" aria-hidden="true">
+              <span>↓</span>
+              <span>compare changes up to</span>
+            </div>
+            <label class="range-endpoint range-endpoint-head" for="diffHeadRefInput">
+              <span class="range-endpoint-badge">HEAD</span>
+              <span class="range-endpoint-body">
+                <span class="range-endpoint-title">End at</span>
+                <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="Working tree (default)" aria-describedby="headEndpointHint">
+                <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set Head</span>
+              </span>
+            </label>
+          </div>
           <div class="diff-actions">
             <button type="button" id="refreshDiffSearchBtn" class="secondary-action">Check for changes</button>
             <button type="button" id="reloadCommitsBtn" class="secondary-action">Reload commits</button>
           </div>
           <div id="diffStatus" class="diff-status"></div>
+          <label class="commit-branch-picker">
+            <span class="commit-branch-picker-label">Branch</span>
+            <select id="commitBranchFilterSelect" aria-label="Branch shown in the commit tree and diff search">
+              <option value="">All visible branches</option>
+            </select>
+          </label>
+          <details class="tree-filter-panel">
+            <summary>
+              <span>More tree options</span>
+              <span class="option-summary" id="treeFilterSummary">Max 5 · full history</span>
+            </summary>
+            <div class="tree-filter-body">
+              <label>
+                <span>Max branches</span>
+                <select id="commitBranchLimitSelect">
+                  <option value="1">1</option>
+                  <option value="3">3</option>
+                  <option value="5" selected>5</option>
+                  <option value="10">10</option>
+                  <option value="20">20</option>
+                  <option value="0">All</option>
+                </select>
+              </label>
+              <label>
+                <span>History</span>
+                <select id="commitTraversalSelect">
+                  <option value="full">Full history</option>
+                  <option value="first_parent">First parent</option>
+                </select>
+              </label>
+              <div class="filter-note">Selecting a branch uses it as Head for both the tree and search. Full history includes commits from merged branches. First parent keeps the branch's mainline and represents merged work at the merge commit.</div>
+            </div>
+          </details>
           <div class="commit-graph-wrap">
             <div class="commit-graph-toolbar">
               <span class="commit-graph-hint">Click = Base · Shift+Click = Head · Scroll for older commits</span>

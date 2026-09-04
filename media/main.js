@@ -8,6 +8,10 @@
   let commitGraphLoading = false;
   let commitGraphRequestId = 0;
   let commitGraphError = '';
+  let gitBranches = [];
+  let commitBranchFilter = '';
+  let commitBranchLimit = 5;
+  let commitTraversal = 'full';
   let translationRequestId = 0;
   let progressWasActive = false;
   let searchInFlight = false;
@@ -29,18 +33,30 @@
   }
 
   function rangeText() {
-    const base = shortRef(byId('diffBaseRefInput')?.value || '');
-    const head = shortRef(byId('diffHeadRefInput')?.value || '');
-    if (base && head) return `${base} → ${head}`;
-    if (base) return `${base} → HEAD`;
-    return 'HEAD → working tree';
+    const { base, head } = effectiveRangeRefs();
+    return `${base} → ${head}`;
+  }
+
+  function effectiveRangeRefs() {
+    const baseInput = shortRef(byId('diffBaseRefInput')?.value || '');
+    const headInput = shortRef(commitBranchFilter || byId('diffHeadRefInput')?.value || '');
+    return {
+      base: baseInput || 'HEAD',
+      head: headInput || (baseInput ? 'HEAD' : 'working tree'),
+    };
   }
 
   function updateRange() {
+    const { base, head } = effectiveRangeRefs();
     const value = rangeText();
-    const bar = byId('diffRangeBar');
+    const activeBase = byId('activeBaseRef');
+    const activeHead = byId('activeHeadRef');
     const summary = byId('rangeSummary');
-    if (bar) bar.textContent = `Diff range: ${value}`;
+    if (activeBase) activeBase.textContent = base;
+    if (activeHead) {
+      activeHead.textContent = head;
+      activeHead.title = commitBranchFilter ? `Selected branch ${commitBranchFilter} is used as Head` : '';
+    }
     if (summary) summary.textContent = value;
     highlightCommitSelection();
   }
@@ -55,6 +71,9 @@
       excludePatterns: byId('excludePatternsInput')?.value || '',
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      commitBranchFilter,
+      commitBranchLimit,
+      commitTraversal,
     };
   }
 
@@ -79,9 +98,16 @@
       const element = byId(id);
       if (element && typeof state[key] === 'string') element.value = state[key];
     });
+    if (typeof state.commitBranchFilter === 'string') commitBranchFilter = state.commitBranchFilter;
+    if ([0, 1, 3, 5, 10, 20].includes(state.commitBranchLimit)) commitBranchLimit = state.commitBranchLimit;
+    if (state.commitTraversal === 'full' || state.commitTraversal === 'first_parent') {
+      commitTraversal = state.commitTraversal;
+    }
     syncSegmentedControls();
+    updateTreeFilterControls();
     updateTargetFilterSummary();
     updateRange();
+    if (commitGraphData.length) renderCommitGraph(commitGraphData);
   }
 
   function splitPatterns(value) {
@@ -137,7 +163,7 @@
     if (!progress?.active || !progress.total) {
       if (progressWasActive) {
         progressWasActive = false;
-        const rankingUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+        const rankingUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
         setStatus(searchInFlight ? `Ranking ${rankingUnit}…` : '', false);
       } else if (cancel && !searchInFlight) {
         cancel.hidden = true;
@@ -151,7 +177,7 @@
     const eta = formatDuration(progress.eta);
     if (elapsed) timing.push(elapsed);
     if (eta) timing.push(`ETA ${eta}`);
-    const progressUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+    const progressUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
     const progressPhase = !progress.phase || progress.phase === 'Embedding'
       ? `Embedding ${progressUnit}`
       : progress.phase;
@@ -247,9 +273,72 @@
 
   const COMMIT_PAGE_SIZE = 200;
 
+  function updateTreeFilterControls() {
+    const branchSelect = byId('commitBranchFilterSelect');
+    const limitSelect = byId('commitBranchLimitSelect');
+    const traversalSelect = byId('commitTraversalSelect');
+    if (branchSelect) branchSelect.value = commitBranchFilter;
+    if (limitSelect) {
+      limitSelect.value = String(commitBranchLimit);
+      limitSelect.disabled = Boolean(commitBranchFilter);
+    }
+    if (traversalSelect) traversalSelect.value = commitTraversal;
+    const headInput = byId('diffHeadRefInput');
+    const headHint = byId('headEndpointHint');
+    const headEndpoint = headInput?.closest('.range-endpoint');
+    if (headInput) {
+      headInput.disabled = Boolean(commitBranchFilter);
+      headInput.title = commitBranchFilter ? `Branch filter uses ${commitBranchFilter} as Head` : '';
+    }
+    headEndpoint?.classList.toggle('is-overridden', Boolean(commitBranchFilter));
+    if (headHint) {
+      headHint.textContent = commitBranchFilter
+        ? `Branch “${commitBranchFilter}” is being used as Head`
+        : 'Shift+click a commit below to set Head';
+    }
+    const summary = byId('treeFilterSummary');
+    if (summary) {
+      const limitLabel = commitBranchFilter
+        ? '1 branch'
+        : commitBranchLimit === 0 ? 'All branches' : `Max ${commitBranchLimit}`;
+      const historyLabel = commitTraversal === 'first_parent' ? 'first parent' : 'full history';
+      summary.textContent = `${limitLabel} · ${historyLabel}`;
+    }
+    updateRange();
+  }
+
+  function renderBranchOptions(branches) {
+    gitBranches = Array.isArray(branches) ? branches : [];
+    const select = byId('commitBranchFilterSelect');
+    if (!select) return;
+    select.innerHTML = '';
+    const allOption = document.createElement('option');
+    allOption.value = '';
+    allOption.textContent = 'All visible branches';
+    select.appendChild(allOption);
+    gitBranches.forEach((branch) => {
+      const option = document.createElement('option');
+      option.value = branch.name;
+      const location = branch.remote ? 'remote' : 'local';
+      option.textContent = `${branch.current ? '✓ ' : ''}${branch.name} (${location})`;
+      select.appendChild(option);
+    });
+    if (commitBranchFilter && !gitBranches.some((branch) => branch.name === commitBranchFilter)) {
+      const staleOption = document.createElement('option');
+      staleOption.value = commitBranchFilter;
+      staleOption.textContent = `${commitBranchFilter} (unavailable)`;
+      select.appendChild(staleOption);
+    }
+    updateTreeFilterControls();
+  }
+
+  function requestGitBranches() {
+    vscode.postMessage({ command: 'getGitBranches' });
+  }
+
   function requestGitCommits(options = {}) {
     const append = Boolean(options.append);
-    if (commitGraphLoading || (append && !commitGraphHasMore)) return;
+    if (append && (commitGraphLoading || !commitGraphHasMore)) return;
 
     const graph = byId('commitGraph');
     if (!append) {
@@ -266,11 +355,14 @@
       limit: COMMIT_PAGE_SIZE,
       offset: append ? commitGraphData.length : 0,
       requestId: commitGraphRequestId,
+      branchFilter: commitBranchFilter,
+      maxBranches: commitBranchLimit,
+      firstParent: commitTraversal === 'first_parent',
     });
   }
 
-  const COMMIT_LANE_WIDTH = 14;
-  const COMMIT_ROW_HEIGHT = 30;
+  const COMMIT_LANE_WIDTH = 16;
+  const COMMIT_ROW_HEIGHT = 34;
   const COMMIT_COLORS = ['#4f9cff', '#22b07d', '#e0a23a', '#d05ce3', '#ef5e7a', '#39bcc4', '#9b8cff'];
 
   function laneColor(column) {
@@ -353,7 +445,7 @@
     });
     commits.forEach((commit, index) => {
       const column = columns.get(commit.hash) || 0;
-      svg.appendChild(svgElement('circle', { cx: x(column), cy: y(index), r: 4, fill: laneColor(column), class: 'commit-node' }));
+      svg.appendChild(svgElement('circle', { cx: x(column), cy: y(index), r: 4.5, fill: laneColor(column), class: 'commit-node' }));
     });
 
     const rows = document.createElement('div');
@@ -429,7 +521,7 @@
 
   function requestPrepareDiff() {
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
-    const unitLabel = searchTarget === 'diff_commits' ? 'commit diffs' : 'diff hunks';
+    const unitLabel = searchTarget === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
     if (byId('diffStatus')) byId('diffStatus').textContent = `Checking ${unitLabel}…`;
     vscode.postMessage({
       command: 'prepareDiffSearch',
@@ -441,6 +533,8 @@
       excludePatterns: byId('excludePatternsInput')?.value || '',
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      branchRef: commitBranchFilter,
+      firstParent: commitTraversal === 'first_parent',
       force: false,
     });
   }
@@ -454,7 +548,7 @@
     }
     searchInFlight = true;
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
-    setStatus(searchTarget === 'diff_commits' ? 'Searching commit diffs…' : 'Searching diff hunks…', true);
+    setStatus(searchTarget === 'diff_commits' ? 'Searching commit file diffs…' : 'Searching diff hunks…', true);
     byId('emptyState')?.setAttribute('hidden', '');
     const translation = translationSettings();
     vscode.postMessage({
@@ -468,6 +562,8 @@
       excludePatterns: byId('excludePatternsInput')?.value || '',
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      branchRef: commitBranchFilter,
+      firstParent: commitTraversal === 'first_parent',
       translateEnabled: translation.enable,
       geminiModel: translation.model,
     });
@@ -514,6 +610,10 @@
     if (!isCommitDiff) return result.commit_subject || '';
     const parts = [];
     if (result.commit_hash) parts.push(shortRef(result.commit_hash));
+    if (result.scored_file_path) {
+      const fileLabel = result.commit_score_aggregation === 'first_matching_file' ? 'Matched file' : 'Best match';
+      parts.push(`${fileLabel}: ${result.scored_file_path}`);
+    }
     if (Number.isFinite(result.commit_file_count)) {
       parts.push(`${result.commit_file_count} files · ${result.commit_hunk_count || 0} hunks`);
     }
@@ -575,7 +675,11 @@
           const fileButton = document.createElement('button');
           fileButton.type = 'button';
           fileButton.className = `diff-commit-hunk-head${entry.is_representative ? ' representative' : ''}`;
-          fileButton.textContent = entry.path || relativePath(entry.file_path || file);
+          const entryPath = entry.path || relativePath(entry.file_path || file);
+          const representativeLabel = result.commit_score_aggregation === 'first_matching_file'
+            ? 'Matched file'
+            : 'Best match';
+          fileButton.textContent = entry.is_representative ? `${representativeLabel} · ${entryPath}` : entryPath;
           fileButton.addEventListener('click', (event) => {
             event.stopPropagation();
             openResultDiff({
@@ -626,7 +730,29 @@
       if (event.key === 'Enter') runSearch();
     });
     byId('refreshDiffSearchBtn')?.addEventListener('click', requestPrepareDiff);
-    byId('reloadCommitsBtn')?.addEventListener('click', () => requestGitCommits());
+    byId('reloadCommitsBtn')?.addEventListener('click', () => {
+      requestGitBranches();
+      requestGitCommits();
+    });
+    byId('commitBranchFilterSelect')?.addEventListener('change', (event) => {
+      commitBranchFilter = event.currentTarget.value || '';
+      updateTreeFilterControls();
+      saveState();
+      requestGitCommits();
+    });
+    byId('commitBranchLimitSelect')?.addEventListener('change', (event) => {
+      const value = Number(event.currentTarget.value);
+      commitBranchLimit = [0, 1, 3, 5, 10, 20].includes(value) ? value : 5;
+      updateTreeFilterControls();
+      saveState();
+      requestGitCommits();
+    });
+    byId('commitTraversalSelect')?.addEventListener('change', (event) => {
+      commitTraversal = event.currentTarget.value === 'first_parent' ? 'first_parent' : 'full';
+      updateTreeFilterControls();
+      saveState();
+      requestGitCommits();
+    });
     byId('commitGraph')?.addEventListener('scroll', (event) => {
       const graph = event.currentTarget;
       if (!(graph instanceof HTMLElement)) return;
@@ -664,6 +790,7 @@
     const message = event.data || {};
     if (message.type === 'initState') {
       restoreState(message.state);
+      requestGitCommits();
       return;
     }
     if (message.type === 'translationSettings') {
@@ -708,16 +835,23 @@
       renderCommitGraph(commitGraphData);
       return;
     }
+    if (message.type === 'gitBranches') {
+      renderBranchOptions(message.branches);
+      return;
+    }
     if (message.type === 'diffPrepared') {
       const data = message.data || {};
       const status = byId('diffStatus');
-      const unitLabel = data.search_target === 'diff_commits' ? 'commits' : 'hunks';
       const unitCount = data.num_diff_units ?? data.num_diff_hunks ?? 0;
       const source = data.diff_embedding_cache_source;
       const embeddingState = source === 'memory' || source === 'disk'
         ? `cached (${source})`
         : source === 'fresh' ? 'saved' : source;
-      if (status) status.textContent = `${unitCount} ${unitLabel} / ${data.num_files || 0} files · embeddings ${embeddingState || 'ready'}`;
+      if (status) {
+        status.textContent = data.search_target === 'diff_commits'
+          ? `${data.num_diff_commits || 0} commits / ${unitCount} file diff groups · embeddings ${embeddingState || 'ready'}`
+          : `${unitCount} hunks / ${data.num_files || 0} files · embeddings ${embeddingState || 'ready'}`;
+      }
       return;
     }
     if (message.type === 'diffPrepareError') {
@@ -747,6 +881,7 @@
   updateRange();
   updateTargetFilterSummary();
   updateTranslationSummary();
+  requestGitBranches();
   requestGitCommits();
   vscode.postMessage({ command: 'requestInitState' });
   vscode.postMessage({ command: 'requestTranslationSettings' });

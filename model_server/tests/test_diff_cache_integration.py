@@ -31,6 +31,71 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
         source.write_text("\n".join(changed) + "\n", encoding="utf-8")
         return repo
 
+    def create_merged_repository(self, root: str):
+        repo = Path(root) / "merged-repo"
+        repo.mkdir()
+        for args in (
+            ["git", "init"],
+            ["git", "config", "user.email", "merge-test@example.com"],
+            ["git", "config", "user.name", "Merge Test"],
+            ["git", "branch", "-M", "main"],
+        ):
+            subprocess.run(args, cwd=repo, check=True, capture_output=True)
+
+        (repo / "app.py").write_text("value = 1\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True, capture_output=True)
+        base = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        subprocess.run(["git", "checkout", "-b", "dev"], cwd=repo, check=True, capture_output=True)
+        (repo / "app.py").write_text("value = 2\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "dev change one"], cwd=repo, check=True, capture_output=True)
+        dev_one = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        (repo / "feature.py").write_text("enabled = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "feature.py"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "dev change two"], cwd=repo, check=True, capture_output=True)
+        dev_two = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+
+        subprocess.run(["git", "checkout", "main"], cwd=repo, check=True, capture_output=True)
+        (repo / "main.py").write_text("mainline = True\n", encoding="utf-8")
+        subprocess.run(["git", "add", "main.py"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "main change"], cwd=repo, check=True, capture_output=True)
+        subprocess.run(
+            ["git", "merge", "--no-ff", "dev", "-m", "merge dev"],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+        merge = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
+        return repo, base, dev_one, dev_two, merge
+
+    def test_first_parent_collapses_merged_branch_commits_into_merge_patch(self):
+        with tempfile.TemporaryDirectory() as root:
+            repo, base, dev_one, dev_two, merge = self.create_merged_repository(root)
+
+            full_history = server.iter_commit_patches(str(repo), base, "main", False)
+            full_hashes = {meta["commit_hash"] for meta, _patch in full_history}
+            self.assertIn(dev_one, full_hashes)
+            self.assertIn(dev_two, full_hashes)
+
+            first_parent = server.iter_commit_patches(str(repo), base, "main", True)
+            first_parent_hashes = {meta["commit_hash"] for meta, _patch in first_parent}
+            self.assertNotIn(dev_one, first_parent_hashes)
+            self.assertNotIn(dev_two, first_parent_hashes)
+            self.assertIn(merge, first_parent_hashes)
+            merge_patch = next(patch for meta, patch in first_parent if meta["commit_hash"] == merge)
+            self.assertIn("feature.py", merge_patch)
+            self.assertIn("+enabled = True", merge_patch)
+
     def test_saved_faiss_embeddings_are_reused_without_encoding(self):
         units = [
             {"search_text": "@@ -1 +1 @@\n-old\n+new"},
@@ -61,7 +126,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
             restored.units.reverse()
             self.assertFalse(restored.load_embeddings(embedding_signature))
 
-    def test_commit_units_combine_all_hunks_for_each_commit(self):
+    def test_commit_units_group_diff_hunks_by_file_within_each_commit(self):
         hunks = [
             {
                 "commit_hash": "first",
@@ -71,6 +136,17 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
                 "lineno": 2,
                 "search_text": "diff --git a/a.py b/a.py\n@@ -2 +2 @@\n-old\n+new",
                 "changed_code": "-old\n+new",
+                "additions": 1,
+                "deletions": 1,
+            },
+            {
+                "commit_hash": "first",
+                "commit_subject": "First change",
+                "path": "a.py",
+                "file_path": "/repo/a.py",
+                "lineno": 20,
+                "search_text": "diff --git a/a.py b/a.py\n@@ -20 +20 @@\n-zero\n+one",
+                "changed_code": "-zero\n+one",
                 "additions": 1,
                 "deletions": 1,
             },
@@ -100,13 +176,99 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
 
         units = server.build_commit_diff_units(hunks)
 
-        self.assertEqual(len(units), 2)
+        self.assertEqual(len(units), 3)
         self.assertEqual(units[0]["search_unit"], "diff_commit")
-        self.assertEqual(units[0]["commit_hunk_count"], 2)
+        self.assertEqual(units[0]["score_unit"], "commit_file_diff")
+        self.assertEqual(units[0]["commit_score_aggregation"], "max_file")
+        self.assertEqual(units[0]["commit_hunk_count"], 3)
         self.assertEqual(units[0]["commit_file_count"], 2)
+        self.assertEqual(units[0]["scored_file_path"], "a.py")
+        self.assertEqual(units[0]["scored_file_hunk_count"], 2)
         self.assertIn("a.py", units[0]["search_text"])
-        self.assertIn("b.py", units[0]["search_text"])
+        self.assertNotIn("b.py", units[0]["search_text"])
         self.assertNotIn("c.py", units[0]["search_text"])
+        self.assertEqual(units[1]["scored_file_path"], "b.py")
+        self.assertNotIn("a.py", units[1]["search_text"])
+        self.assertIn("b.py", units[1]["search_text"])
+        self.assertEqual(units[2]["scored_file_path"], "c.py")
+
+    def test_commit_semantic_score_uses_the_best_file_diff_group(self):
+        hunks = [
+            {
+                "commit_hash": "commit-a",
+                "commit_subject": "Change two files",
+                "path": "unrelated.py",
+                "file_path": "/repo/unrelated.py",
+                "lineno": 1,
+                "search_text": "diff --git a/unrelated.py b/unrelated.py\n@@ -1 +1 @@\n-old\n+unrelated",
+                "changed_code": "-old\n+unrelated",
+                "additions": 1,
+                "deletions": 1,
+            },
+            {
+                "commit_hash": "commit-a",
+                "commit_subject": "Change two files",
+                "path": "best.py",
+                "file_path": "/repo/best.py",
+                "lineno": 1,
+                "search_text": "diff --git a/best.py b/best.py\n@@ -1 +1 @@\n-old\n+best semantic match",
+                "changed_code": "-old\n+best semantic match",
+                "additions": 1,
+                "deletions": 1,
+            },
+            {
+                "commit_hash": "commit-b",
+                "commit_subject": "Another change",
+                "path": "other.py",
+                "file_path": "/repo/other.py",
+                "lineno": 1,
+                "search_text": "diff --git a/other.py b/other.py\n@@ -1 +1 @@\n-old\n+other",
+                "changed_code": "-old\n+other",
+                "additions": 1,
+                "deletions": 1,
+            },
+        ]
+        state = server.DiffSearchState()
+        state.units = server.build_commit_diff_units(hunks)
+        document_embeddings = np.asarray(
+            [[0.0, 1.0], [1.0, 0.0], [0.8, 0.6]],
+            dtype=np.float32,
+        )
+        state.embeddings = document_embeddings
+        state.faiss_index = faiss.IndexFlatL2(2)
+        state.faiss_index.add(document_embeddings)
+
+        prepared = {
+            "num_files": 3,
+            "num_diff_hunks": 3,
+            "num_diff_units": 3,
+            "num_diff_commits": 2,
+        }
+        with (
+            patch.object(server, "diff_search_state", state),
+            patch.object(server, "prepare_diff_search_index", return_value=prepared),
+            patch.object(
+                server,
+                "encode_code",
+                return_value=np.asarray([[1.0, 0.0]], dtype=np.float32),
+            ),
+        ):
+            response = server.search_diff_hunks(server.SearchFunctionsSimpleRequest(
+                directory="/repo",
+                query="best semantic match",
+                top_k=10,
+                search_mode="semantic",
+                search_target="diff_commits",
+            ))
+
+        self.assertEqual([result["commit_hash"] for result in response["results"]], ["commit-a", "commit-b"])
+        self.assertEqual(response["results"][0]["scored_file_path"], "best.py")
+        self.assertEqual(response["results"][0]["score"], 1.0)
+        self.assertEqual(response["results"][0]["commit_score_aggregation"], "max_file")
+        self.assertEqual(
+            [entry["path"] for entry in response["results"][0]["commit_hunks"] if entry["is_representative"]],
+            ["best.py"],
+        )
 
     def test_text_modes_search_only_diff_text(self):
         units = [
@@ -119,7 +281,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
         self.assertEqual(set(scores), {1})
         self.assertGreater(scores[1], 0)
 
-    def test_commit_range_produces_one_search_unit_per_real_commit(self):
+    def test_commit_range_produces_one_search_unit_per_changed_file_in_each_commit(self):
         with tempfile.TemporaryDirectory() as root:
             repo = self.create_changed_repository(root)
             source = repo / "sample.py"
@@ -168,6 +330,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
                 )
 
             self.assertEqual(prepared["num_diff_units"], 2)
+            self.assertEqual(prepared["num_diff_commits"], 2)
             self.assertEqual({unit["commit_hash"] for unit in state.units}, {first_change, second_change})
             self.assertEqual(
                 {unit["commit_subject"] for unit in state.units},
@@ -242,6 +405,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
                 )
 
             self.assertEqual(prepared["num_diff_units"], 1)
+            self.assertEqual(prepared["num_diff_commits"], 1)
             self.assertEqual(state.units[0]["commit_hash"], python_commit)
             self.assertEqual(state.units[0]["commit_files"], ["sample.py"])
 
@@ -325,6 +489,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
 
             self.assertEqual(commit_prepared["num_diff_hunks"], 2)
             self.assertEqual(commit_prepared["num_diff_units"], 1)
+            self.assertEqual(commit_prepared["num_diff_commits"], 1)
             self.assertEqual(len(commit_batches[0]), 1)
             self.assertEqual(len(commit_response["results"]), 1)
             self.assertEqual(commit_response["results"][0]["search_unit"], "diff_commit")

@@ -6,6 +6,7 @@ const path = require('node:path');
 const styles = fs.readFileSync(path.join(__dirname, '..', 'media', 'styles.css'), 'utf8');
 const script = fs.readFileSync(path.join(__dirname, '..', 'media', 'main.js'), 'utf8');
 const htmlBuilder = fs.readFileSync(path.join(__dirname, '..', 'src', 'webviewHtml.ts'), 'utf8');
+const extension = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
 const modelBackend = fs.readFileSync(path.join(__dirname, '..', 'model_server', 'model.py'), 'utf8');
 
 function declarationBlock(selector) {
@@ -30,6 +31,40 @@ test('loads the commit graph through the end of local history', () => {
   assert.match(script, /End of local history/);
   assert.match(script, /Load older commits/);
   assert.match(htmlBuilder, /Scroll for older commits/);
+});
+
+test('filters the commit tree and diff search by branch and traversal', () => {
+  assert.match(htmlBuilder, /class="commit-branch-picker"/);
+  assert.match(htmlBuilder, /<span>More tree options<\/span>/);
+  assert.match(htmlBuilder, /id="commitBranchFilterSelect"/);
+  assert.match(htmlBuilder, /id="commitBranchLimitSelect"/);
+  assert.match(htmlBuilder, /id="commitTraversalSelect"/);
+  assert.match(htmlBuilder, />Full history<\/option>/);
+  assert.match(htmlBuilder, />First parent<\/option>/);
+  assert.doesNotMatch(htmlBuilder, /data-commit-view=/);
+  assert.match(script, /branchFilter: commitBranchFilter/);
+  assert.match(script, /maxBranches: commitBranchLimit/);
+  assert.match(script, /branchRef: commitBranchFilter/);
+  assert.match(script, /firstParent: commitTraversal === 'first_parent'/);
+  assert.match(extension, /'getGitBranches'/);
+  assert.match(extension, /'git',\s*\['for-each-ref'/);
+  assert.match(extension, /\.\.\.\(firstParent \? \['--first-parent'\] : \[\]\)/);
+  assert.match(extension, /parents: firstParent \? parentHashes\.slice\(0, 1\) : parentHashes/);
+  assert.match(extension, /branch_ref: branchRef/);
+  assert.match(extension, /first_parent: !!msg\.firstParent/);
+});
+
+test('keeps Base and Head visible as explicit range endpoints', () => {
+  assert.match(htmlBuilder, /id="activeBaseRef"/);
+  assert.match(htmlBuilder, /id="activeHeadRef"/);
+  assert.match(htmlBuilder, /class="range-endpoint range-endpoint-base"/);
+  assert.match(htmlBuilder, /class="range-endpoint range-endpoint-head"/);
+  assert.match(htmlBuilder, />BASE<\/span>/);
+  assert.match(htmlBuilder, />HEAD<\/span>/);
+  assert.match(script, /function effectiveRangeRefs\(\)/);
+  assert.match(script, /headEndpoint\?\.classList\.toggle\('is-overridden'/);
+  assert.match(declarationBlock('.diff-range-bar'), /grid-template-columns\s*:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
+  assert.match(declarationBlock('.diff-options .range-endpoint'), /grid-template-columns\s*:\s*3\.6em minmax\(0, 1fr\)/);
 });
 
 test('renders determinate embedding progress from the start of the track', () => {
@@ -77,6 +112,13 @@ test('keeps result cards compact without inline diff bodies', () => {
   assert.doesNotMatch(script, /Semantic \$\{semantic\}/);
   assert.doesNotMatch(script, /BM25 \$\{bm25\}/);
   assert.doesNotMatch(script, /class="result-meta"/);
+});
+
+test('identifies the file diff that supplies a commit score', () => {
+  assert.match(script, /result\.scored_file_path/);
+  assert.match(script, /'Best match'/);
+  assert.match(script, /entry\.is_representative/);
+  assert.match(declarationBlock('.diff-commit-hunk-head.representative'), /background\s*:\s*rgba\(224, 162, 58, 0\.14\)/);
 });
 
 test('uses distinct filled actions for opening diffs and commits', () => {

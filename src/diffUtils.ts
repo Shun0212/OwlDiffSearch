@@ -19,6 +19,13 @@ export function normalizeCommitPage(limitValue: unknown, offsetValue: unknown): 
 	};
 }
 
+export function normalizeCommitBranchLimit(value: unknown): number {
+	const requested = typeof value === 'number' && Number.isFinite(value)
+		? Math.floor(value)
+		: 5;
+	return [0, 1, 3, 5, 10, 20].includes(requested) ? requested : 5;
+}
+
 export function normalizeSearchMode(value: unknown): DiffSearchMode {
 	return value === 'semantic' || value === 'hybrid' || value === 'bm25' || value === 'keyword'
 		? value

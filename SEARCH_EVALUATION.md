@@ -2,6 +2,8 @@
 
 `pallets/flask` の実際の履歴を使い、検索クエリに対する結果の関連性を確認した記録です。
 
+> この数値は、コミット内の全hunkを一括評価していた旧方式の記録です。現在の `Commits` は同一コミット・同一ファイルのdiff hunkをまとめ、ファイル別スコアの最大値を採用します。再評価するまでは参考値として扱ってください。
+
 ## Dataset
 
 - Repository: `demo_repositories/flask`（READMEのclone手順で作成）

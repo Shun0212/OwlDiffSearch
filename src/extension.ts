@@ -8,6 +8,7 @@ import * as net from 'net';
 import * as fs from 'fs';
 import {
 	buildCommitUrl,
+	normalizeCommitBranchLimit,
 	normalizeCommitPage,
 	normalizeDiffSearchTarget,
 	normalizeSearchMode,
@@ -22,6 +23,7 @@ const DIFF_SERVER_SERVICE = 'owl-diff-search';
 const ALLOWED_WEBVIEW_COMMANDS = new Set([
 	'cancelEmbedding',
 	'checkServerStatus',
+	'getGitBranches',
 	'getGitCommits',
 	'openCommitRemote',
 	'openDiff',
@@ -860,6 +862,43 @@ function execFileText(command: string, args: string[], cwd: string): Promise<str
 	});
 }
 
+type GitBranchInfo = {
+	ref: string;
+	name: string;
+	current: boolean;
+	remote: boolean;
+	date: string;
+};
+
+async function listGitBranches(cwd: string): Promise<GitBranchInfo[]> {
+	const format = ['%(refname)', '%(refname:short)', '%(HEAD)', '%(committerdate:relative)'].join('%09');
+	const out = await execFileText(
+		'git',
+		['for-each-ref', '--sort=-committerdate', `--format=${format}`, 'refs/heads', 'refs/remotes'],
+		cwd
+	);
+	const seen = new Set<string>();
+	const branches = out
+		.split(/\r?\n/)
+		.map((line): GitBranchInfo | undefined => {
+			const [ref = '', name = '', head = '', date = ''] = line.split('\t');
+			if (!ref || !name || ref.endsWith('/HEAD') || seen.has(name)) {
+				return undefined;
+			}
+			seen.add(name);
+			return {
+				ref,
+				name,
+				current: head.trim() === '*',
+				remote: ref.startsWith('refs/remotes/'),
+				date,
+			};
+		})
+		.filter((branch): branch is GitBranchInfo => Boolean(branch));
+	branches.sort((left, right) => Number(right.current) - Number(left.current));
+	return branches;
+}
+
 // Read the raw content of a file at a given git ref (untrimmed, larger buffer
 // for source files). Returns '' when the path does not exist at that ref.
 function gitShowFileContent(repo: string, ref: string, relPath: string): Promise<string> {
@@ -1127,9 +1166,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 const excludeGlobs = parseGlobPatterns(msg.excludePatterns);
                                 let diffBaseRef = '';
                                 let diffHeadRef = '';
+				let branchRef = '';
                                 try {
                                         diffBaseRef = validateGitRef(msg.diffBaseRef);
                                         diffHeadRef = validateGitRef(msg.diffHeadRef);
+					branchRef = validateGitRef(msg.branchRef);
                                 } catch (error: any) {
                                         webviewView.webview.postMessage({ type: 'diffPrepareError', message: error?.message || String(error) });
                                         return;
@@ -1148,6 +1189,8 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                                         search_target: searchTarget,
                                                         diff_base_ref: diffBaseRef,
                                                         diff_head_ref: diffHeadRef,
+								branch_ref: branchRef,
+								first_parent: !!msg.firstParent,
                                                         force: !!msg.force
                                                 })
                                         });
@@ -1164,22 +1207,65 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 }
                                 return;
                         }
+                        if (msg.command === 'getGitBranches') {
+                                const workspaceFolders = vscode.workspace.workspaceFolders;
+                                if (!workspaceFolders || workspaceFolders.length === 0) {
+                                        webviewView.webview.postMessage({ type: 'gitBranches', branches: [] });
+                                        return;
+                                }
+				const branches = await listGitBranches(workspaceFolders[0].uri.fsPath);
+				webviewView.webview.postMessage({ type: 'gitBranches', branches });
+				return;
+			}
                         if (msg.command === 'getGitCommits') {
                                 const workspaceFolders = vscode.workspace.workspaceFolders;
                                 if (!workspaceFolders || workspaceFolders.length === 0) {
                                         webviewView.webview.postMessage({ type: 'gitCommits', commits: [], error: 'No workspace folder found.' });
                                         return;
                                 }
-                                const folderPath = workspaceFolders[0].uri.fsPath;
+				const folderPath = workspaceFolders[0].uri.fsPath;
 				const { limit, offset } = normalizeCommitPage(msg.limit, msg.offset);
+				const maxBranches = normalizeCommitBranchLimit(msg.maxBranches);
+				const firstParent = Boolean(msg.firstParent);
+				let branchFilter = '';
+				try {
+					branchFilter = validateGitRef(msg.branchFilter);
+				} catch (error: any) {
+					webviewView.webview.postMessage({
+						type: 'gitCommits',
+						commits: [],
+						hasMore: false,
+						error: error?.message || String(error),
+					});
+					return;
+				}
 				const requestId = typeof msg.requestId === 'number' ? msg.requestId : undefined;
+				const branches = await listGitBranches(folderPath);
+				let revisionArgs: string[];
+				if (branchFilter) {
+					const branch = branches.find((candidate) => candidate.name === branchFilter);
+					revisionArgs = [branch?.ref || branchFilter];
+				} else if (maxBranches === 0) {
+					revisionArgs = ['--branches', '--remotes', 'HEAD'];
+				} else {
+					revisionArgs = branches.slice(0, maxBranches).map((branch) => branch.ref);
+					if (revisionArgs.length === 0) {
+						revisionArgs.push('HEAD');
+					}
+				}
                                 // Unit separator (0x1f) between fields, record separator (0x1e) between commits.
                                 const fmt = ['%H', '%h', '%P', '%an', '%ar', '%D', '%s'].join('%x1f') + '%x1e';
                                 const out = await execFileText(
                                         'git',
-                                        // --branches/--remotes/--tags + HEAD draws the graph across branches
-                                        // without pulling in stash entries (refs/stash) like --all would.
-					['log', '--date-order', '--branches', '--remotes', '--tags', 'HEAD', `--skip=${offset}`, `--max-count=${limit + 1}`, `--pretty=format:${fmt}`],
+					[
+						'log',
+						'--date-order',
+						...(firstParent ? ['--first-parent'] : []),
+						...revisionArgs,
+						`--skip=${offset}`,
+						`--max-count=${limit + 1}`,
+						`--pretty=format:${fmt}`,
+					],
                                         folderPath
                                 );
                                 if (!out.trim()) {
@@ -1200,10 +1286,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                         .filter(Boolean)
                                         .map((rec) => {
                                                 const [hash, short, parents, author, date, refs, subject] = rec.split('\x1f');
+						const parentHashes = (parents || '').split(' ').map((parent) => parent.trim()).filter(Boolean);
                                                 return {
                                                         hash: hash || '',
                                                         short: short || (hash || '').slice(0, 7),
-                                                        parents: (parents || '').split(' ').map((p) => p.trim()).filter(Boolean),
+							parents: firstParent ? parentHashes.slice(0, 1) : parentHashes,
                                                         author: author || '',
                                                         date: date || '',
                                                         refs: (refs || '').split(',').map((r) => r.trim()).filter(Boolean),
@@ -1258,9 +1345,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				const excludeGlobs = parseGlobPatterns(msg.excludePatterns);
 				let diffBaseRef = '';
 				let diffHeadRef = '';
+				let branchRef = '';
 				try {
 					diffBaseRef = validateGitRef(msg.diffBaseRef);
 					diffHeadRef = validateGitRef(msg.diffHeadRef);
+					branchRef = validateGitRef(msg.branchRef);
 				} catch (error: any) {
 					webviewView.webview.postMessage({ type: 'error', message: error?.message || String(error) });
 					return;
@@ -1297,7 +1386,9 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 							scope: 'changed',
 							search_target: searchTarget,
 							diff_base_ref: diffBaseRef,
-							diff_head_ref: diffHeadRef
+							diff_head_ref: diffHeadRef,
+							branch_ref: branchRef,
+							first_parent: !!msg.firstParent
 						})
 					});
 					const data: any = await res.json();
@@ -1314,6 +1405,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						diff_embedding_cache_source: data?.diff_embedding_cache_source,
 						num_diff_hunks: data?.num_diff_hunks,
 						num_diff_units: data?.num_diff_units,
+						num_diff_commits: data?.num_diff_commits,
 						search_target: data?.search_target,
 						num_files: data?.num_files
 					};

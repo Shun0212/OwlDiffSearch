@@ -171,14 +171,50 @@ input[type="text"]::placeholder {
 }
 
 .diff-range-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0.42em;
   margin-bottom: 0.6em;
-  padding: 0.35em 0.55em;
-  border-left: 2px solid var(--vscode-charts-blue, #3794ff);
-  border-radius: 0 4px 4px 0;
-  background: rgba(55, 148, 255, 0.08);
+  padding: 0.48em 0.55em;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.28));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, rgba(128, 128, 128, 0.06));
+  font-size: 0.74em;
+}
+
+.diff-range-bar-label {
+  grid-column: 1 / -1;
   color: var(--vscode-descriptionForeground, #8b949e);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.active-range-ref {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0.18em 0.45em;
+  border-radius: 4px;
   font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 0.76em;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.active-range-base {
+  background: rgba(79, 156, 255, 0.18);
+  color: var(--vscode-textLink-foreground, #4f9cff);
+}
+
+.active-range-head {
+  background: rgba(224, 162, 58, 0.18);
+  color: var(--vscode-charts-yellow, #e0a23a);
+}
+
+.active-range-arrow {
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-size: 1.1em;
+  line-height: 1;
 }
 
 .diff-control-card {
@@ -241,7 +277,7 @@ input[type="text"]::placeholder {
   background: var(--vscode-sideBar-background, transparent);
 }
 
-.option-panel summary {
+.option-panel > summary {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -254,18 +290,18 @@ input[type="text"]::placeholder {
   list-style: none;
 }
 
-.option-panel summary::-webkit-details-marker {
+.option-panel > summary::-webkit-details-marker {
   display: none;
 }
 
-.option-panel summary::before {
+.option-panel > summary::before {
   content: ">";
   color: var(--vscode-descriptionForeground, #8b949e);
   transform: rotate(0deg);
   transition: transform 0.15s;
 }
 
-.option-panel[open] summary::before {
+.option-panel[open] > summary::before {
   transform: rotate(90deg);
 }
 
@@ -336,6 +372,207 @@ input[type="text"]::placeholder {
   font-size: 0.75em;
 }
 
+.range-editor {
+  display: grid;
+  gap: 0;
+  overflow: hidden;
+  border: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.32));
+  border-radius: 6px;
+  background: var(--vscode-editor-background, transparent);
+}
+
+.range-editor-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5em;
+  padding: 0.38em 0.55em;
+  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.22));
+  background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.06));
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 0.74em;
+  font-weight: 600;
+}
+
+.range-editor-heading span:last-child {
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 400;
+}
+
+.diff-options .range-endpoint {
+  display: grid;
+  grid-template-columns: 3.6em minmax(0, 1fr);
+  align-items: stretch;
+  gap: 0;
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 0.8em;
+}
+
+.range-endpoint-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0.58em 0;
+  border-right: 1px solid currentColor;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.82em;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.range-endpoint-base .range-endpoint-badge {
+  color: var(--vscode-textLink-foreground, #4f9cff);
+}
+
+.range-endpoint-head .range-endpoint-badge {
+  color: var(--vscode-charts-yellow, #e0a23a);
+}
+
+.range-endpoint-body {
+  display: grid;
+  min-width: 0;
+  gap: 0.28em;
+  padding: 0.5em 0.58em;
+}
+
+.range-endpoint-title {
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 0.9em;
+  font-weight: 700;
+}
+
+.range-endpoint-hint {
+  overflow: hidden;
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-size: 0.78em;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.range-endpoint input {
+  min-height: 2.35em;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-weight: 600;
+}
+
+.range-endpoint-base input:focus-visible {
+  outline-color: var(--vscode-textLink-foreground, #4f9cff);
+}
+
+.range-endpoint-head input:focus-visible {
+  outline-color: var(--vscode-charts-yellow, #e0a23a);
+}
+
+.range-endpoint.is-overridden {
+  background: rgba(224, 162, 58, 0.08);
+}
+
+.range-endpoint.is-overridden .range-endpoint-hint {
+  color: var(--vscode-charts-yellow, #e0a23a);
+  font-weight: 600;
+}
+
+.range-endpoint-connector {
+  display: flex;
+  align-items: center;
+  gap: 0.45em;
+  padding: 0.12em 0.58em 0.12em 1.1em;
+  border-block: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.18));
+  background: rgba(128, 128, 128, 0.04);
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-size: 0.68em;
+}
+
+.range-endpoint-connector span:first-child {
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 1.15em;
+}
+
+.commit-branch-picker {
+  display: grid;
+  gap: 0.32em;
+  padding: 0.58em 0.65em;
+  border: 1px solid var(--vscode-focusBorder, #007fd4);
+  border-radius: 6px;
+  background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.08));
+}
+
+.commit-branch-picker-label {
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-size: 0.75em;
+  font-weight: 600;
+}
+
+.commit-branch-picker select {
+  width: 100%;
+  min-width: 0;
+  min-height: 2.35em;
+  padding-inline: 0.55em;
+  border-color: var(--vscode-dropdown-border, var(--vscode-focusBorder, #007fd4));
+  background: var(--vscode-dropdown-background, var(--vscode-input-background, #3c3c3c));
+  color: var(--vscode-dropdown-foreground, var(--vscode-input-foreground, #cccccc));
+  font-size: 0.88em;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tree-filter-panel {
+  overflow: hidden;
+  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.28));
+  border-radius: 5px;
+  background: var(--vscode-editor-background, transparent);
+}
+
+.tree-filter-panel > summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  padding: 0.42em 0.5em;
+  cursor: pointer;
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 0.78em;
+  font-weight: 600;
+  list-style: none;
+}
+
+.tree-filter-panel > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tree-filter-panel > summary::before {
+  content: ">";
+  color: var(--vscode-descriptionForeground, #8b949e);
+  transform: rotate(0deg);
+  transition: transform 0.15s;
+}
+
+.tree-filter-panel[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.tree-filter-body {
+  display: grid;
+  gap: 0.48em;
+  padding: 0.5em;
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
+}
+
+.tree-filter-body label {
+  display: grid;
+  grid-template-columns: 6.8em minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5em;
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-size: 0.78em;
+}
+
+.tree-filter-body select {
+  width: 100%;
+  min-width: 0;
+}
+
 .translation-toggle {
   display: flex;
   align-items: center;
@@ -390,7 +627,7 @@ input[type="text"]::placeholder {
 
 .commit-graph {
   position: relative;
-  max-height: 17.5em;
+  height: clamp(20em, 46vh, 32em);
   overflow: auto;
   background: var(--vscode-editor-background, transparent);
 }
@@ -446,7 +683,7 @@ input[type="text"]::placeholder {
   border-radius: 0;
   background: transparent;
   color: var(--vscode-foreground, #cccccc);
-  font-size: 0.72em;
+  font-size: 0.78em;
   font-weight: 400;
   text-align: left;
   box-shadow: none;
@@ -779,6 +1016,11 @@ input[type="text"]::placeholder {
   overflow: hidden;
   text-align: left;
   text-overflow: ellipsis;
+}
+
+.diff-commit-hunk-head.representative {
+  border-left-color: var(--vscode-charts-yellow, #e0a23a);
+  background: rgba(224, 162, 58, 0.14);
 }
 
 .empty-state {

@@ -68,6 +68,8 @@ class SearchFunctionsSimpleRequest(BaseModel):
     search_target: str = "diff_hunks"
     diff_base_ref: Optional[str] = None
     diff_head_ref: Optional[str] = None
+    branch_ref: Optional[str] = None
+    first_parent: bool = False
     force_diff_refresh: bool = False
 
 
@@ -82,6 +84,8 @@ class PrepareDiffSearchRequest(BaseModel):
     semantic_weight: float = 0.75
     diff_base_ref: Optional[str] = None
     diff_head_ref: Optional[str] = None
+    branch_ref: Optional[str] = None
+    first_parent: bool = False
     force: bool = False
 
 
@@ -174,7 +178,7 @@ class DiffSearchState:
         self.embedding_signature: str = ""
         self.search_target: str = "diff_hunks"
         self.hunks: list[dict] = []
-        # Units are individual unified-diff hunks or complete per-commit diffs.
+        # Units are individual unified-diff hunks or per-commit/per-file diff groups.
         self.units: list[dict] = []
         self.file_count: int = 0
         self.embeddings: Optional[np.ndarray] = None
@@ -320,6 +324,8 @@ def display_diff_compare(base_ref: str, head_ref: str) -> str:
         return f"{base}...{head}"
     if base:
         return f"{base}...HEAD"
+    if head:
+        return f"HEAD...{head}"
     return "HEAD...working tree"
 
 
@@ -331,6 +337,8 @@ def git_diff_text(directory: str, base_ref: str, head_ref: str) -> str:
         args.append(f"{base}...{head}")
     elif base:
         args.append(f"{base}...HEAD")
+    elif head:
+        args.append(f"HEAD...{head}")
     else:
         args.append("HEAD")
     args.append("--")
@@ -435,7 +443,12 @@ def parse_log_patches(output: str) -> list[tuple[dict, str]]:
     return segments
 
 
-def iter_commit_patches(directory: str, base_ref: str, head_ref: str) -> list[tuple[dict, str]]:
+def iter_commit_patches(
+    directory: str,
+    base_ref: str,
+    head_ref: str,
+    first_parent: bool = False,
+) -> list[tuple[dict, str]]:
     """Yield (commit_meta, patch_text) for the selected diff range.
 
     For a committed range (base and/or head supplied) we use `git log -p` so
@@ -447,12 +460,21 @@ def iter_commit_patches(directory: str, base_ref: str, head_ref: str) -> list[tu
     empty_meta = {"commit_hash": "", "commit_subject": "", "commit_message": ""}
     if not base and not head:
         return [(empty_meta, git_diff_text(directory, base_ref, head_ref))]
-    rev_range = f"{base}..{head}" if (base and head) else f"{base}..HEAD"
+    if base and head:
+        rev_range = f"{base}..{head}"
+    elif base:
+        rev_range = f"{base}..HEAD"
+    else:
+        rev_range = f"HEAD..{head}"
     fmt = f"{_LOG_RECORD_SEP}%H{_LOG_UNIT_SEP}%s{_LOG_UNIT_SEP}%B{_LOG_RECORD_SEP}"
     args = [
         "git", "log", "-p", "--no-color", "--no-ext-diff", "--unified=3",
-        f"--format={fmt}", rev_range, "--",
     ]
+    if first_parent:
+        # Keep the mainline traversal while representing a merged branch as
+        # one merge patch against its first parent.
+        args.extend(["--first-parent", "--diff-merges=first-parent"])
+    args.extend([f"--format={fmt}", rev_range, "--"])
     proc = subprocess.run(args, cwd=directory, capture_output=True, text=True)
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "git log failed").strip()
@@ -514,10 +536,14 @@ def diff_signature(
     exclude_globs: Optional[List[str]],
     diff_base_ref: Optional[str],
     diff_head_ref: Optional[str],
+    branch_ref: Optional[str] = None,
+    first_parent: bool = False,
 ) -> tuple[str, str, str]:
     root = str(Path(directory).resolve())
     base_ref = sanitize_git_ref(diff_base_ref)
     head_ref = sanitize_git_ref(diff_head_ref)
+    selected_branch = sanitize_git_ref(branch_ref)
+    effective_head_ref = selected_branch or head_ref
     payload = {
         "directory": root,
         "file_ext": file_ext,
@@ -525,9 +551,11 @@ def diff_signature(
         "include_globs": normalize_glob_patterns(include_globs),
         "exclude_globs": normalize_glob_patterns(exclude_globs),
         "diff_base_ref": base_ref,
-        "diff_head_ref": head_ref,
+        "diff_head_ref": effective_head_ref,
+        "branch_ref": selected_branch,
+        "first_parent": bool(first_parent),
     }
-    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest(), base_ref, head_ref
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest(), base_ref, effective_head_ref
 
 
 def diff_embedding_signature(signature: str) -> str:
@@ -547,6 +575,8 @@ def collect_diff_hunks(
     exclude_globs: Optional[List[str]],
     diff_base_ref: Optional[str],
     diff_head_ref: Optional[str],
+    branch_ref: Optional[str] = None,
+    first_parent: bool = False,
 ) -> tuple[list[dict], int, str, str]:
     root = Path(directory).resolve()
     if not root.is_dir():
@@ -559,10 +589,12 @@ def collect_diff_hunks(
         exclude_globs,
         diff_base_ref,
         diff_head_ref,
+        branch_ref,
+        first_parent,
     )
     include_file_set = {str(Path(path).resolve()) for path in include_files or []}
     ignore_spec = load_gitignore_spec(str(root))
-    segments = iter_commit_patches(str(root), base_ref, head_ref)
+    segments = iter_commit_patches(str(root), base_ref, head_ref, first_parent)
     if not any(patch.strip() for _meta, patch in segments):
         return [], 0, base_ref, head_ref
 
@@ -802,7 +834,12 @@ def keyword_search_matches(units: list[dict], query: str) -> dict[int, list[str]
 
 
 def build_commit_diff_units(hunks: list[dict]) -> list[dict]:
-    """Combine every hunk in a commit into one searchable full-commit diff."""
+    """Group a commit's diff hunks by file for embedding and text search.
+
+    Each returned unit contains only the hunks for one file in one commit. Search
+    later keeps the highest-scoring file unit as the representative result for
+    that commit.
+    """
     order: list[str] = []
     groups: dict[str, list[dict]] = {}
     for hunk in hunks:
@@ -815,12 +852,6 @@ def build_commit_diff_units(hunks: list[dict]) -> list[dict]:
     units: list[dict] = []
     for key in order:
         commit_hunks = groups[key]
-        first = commit_hunks[0]
-        full_diff = "\n\n".join(
-            str(hunk.get("search_text") or "")
-            for hunk in commit_hunks
-            if hunk.get("search_text")
-        ).rstrip()
         file_order: list[str] = []
         files: dict[str, list[dict]] = {}
         for hunk in commit_hunks:
@@ -829,12 +860,12 @@ def build_commit_diff_units(hunks: list[dict]) -> list[dict]:
                 files[path] = []
                 file_order.append(path)
             files[path].append(hunk)
-        file_entries = []
+        file_entries: list[dict] = []
         for path in file_order:
             file_hunks = files[path]
             representative = file_hunks[0]
             file_entries.append({
-                "path": representative.get("path"),
+                "path": representative.get("path") or path,
                 "file_path": representative.get("file_path"),
                 "lineno": representative.get("lineno") or 1,
                 "diff_old_path": representative.get("diff_old_path"),
@@ -842,33 +873,70 @@ def build_commit_diff_units(hunks: list[dict]) -> list[dict]:
                 "additions": sum(int(hunk.get("additions") or 0) for hunk in file_hunks),
                 "deletions": sum(int(hunk.get("deletions") or 0) for hunk in file_hunks),
                 "hunk_count": len(file_hunks),
-                "is_representative": path == file_order[0],
             })
 
-        title = str(first.get("commit_subject") or "Working tree changes")
-        unit = dict(first)
-        unit.update({
-            "name": title,
-            "function_name": title,
-            "symbol_kind": "diff_commit",
-            "result_type": "diff_commit",
-            "search_unit": "diff_commit",
-            "raw_code": full_diff,
-            "code": full_diff,
-            "search_text": full_diff,
-            "diff_code": full_diff,
-            "changed_code": "\n".join(
-                str(hunk.get("changed_code") or "") for hunk in commit_hunks
-            ).rstrip(),
-            "additions": sum(int(hunk.get("additions") or 0) for hunk in commit_hunks),
-            "deletions": sum(int(hunk.get("deletions") or 0) for hunk in commit_hunks),
-            "commit_file_count": len(file_entries),
-            "commit_hunk_count": len(commit_hunks),
-            "commit_files": file_order,
-            "commit_hunks": file_entries,
-        })
-        units.append(unit)
+        commit_additions = sum(int(hunk.get("additions") or 0) for hunk in commit_hunks)
+        commit_deletions = sum(int(hunk.get("deletions") or 0) for hunk in commit_hunks)
+        for path in file_order:
+            file_hunks = files[path]
+            first = file_hunks[0]
+            file_diff = "\n\n".join(
+                str(hunk.get("search_text") or "")
+                for hunk in file_hunks
+                if hunk.get("search_text")
+            ).rstrip()
+            title = str(first.get("commit_subject") or "Working tree changes")
+            unit = dict(first)
+            unit.update({
+                "name": title,
+                "function_name": title,
+                "symbol_kind": "diff_commit",
+                "result_type": "diff_commit",
+                "search_unit": "diff_commit",
+                "score_unit": "commit_file_diff",
+                "commit_score_aggregation": "max_file",
+                "scored_file_path": path,
+                "raw_code": file_diff,
+                "code": file_diff,
+                "search_text": file_diff,
+                "diff_code": file_diff,
+                "changed_code": "\n".join(
+                    str(hunk.get("changed_code") or "") for hunk in file_hunks
+                ).rstrip(),
+                "additions": commit_additions,
+                "deletions": commit_deletions,
+                "scored_file_hunk_count": len(file_hunks),
+                "commit_file_count": len(file_entries),
+                "commit_hunk_count": len(commit_hunks),
+                "commit_files": file_order,
+                "commit_hunks": [
+                    {**entry, "is_representative": entry["path"] == path}
+                    for entry in file_entries
+                ],
+            })
+            units.append(unit)
     return units
+
+
+def commit_result_key(unit: dict) -> str:
+    """Return the result-group identity for a real commit or the working tree."""
+    return str(unit.get("commit_hash") or "__working_tree__")
+
+
+def collapse_commit_file_ranking(
+    ranked: list[tuple[float, float, float, int]],
+    units: list[dict],
+) -> list[tuple[float, float, float, int]]:
+    """Keep the highest-scoring per-file diff unit for each commit."""
+    selected: list[tuple[float, float, float, int]] = []
+    seen: set[str] = set()
+    for item in ranked:
+        key = commit_result_key(units[item[3]])
+        if key in seen:
+            continue
+        seen.add(key)
+        selected.append(item)
+    return selected
 
 
 def diff_result_for_target(hunk: dict, search_target: str) -> dict:
@@ -893,6 +961,8 @@ def prepare_diff_search_index(
     diff_base_ref: Optional[str],
     diff_head_ref: Optional[str],
     force: bool = False,
+    branch_ref: Optional[str] = None,
+    first_parent: bool = False,
 ) -> dict:
     normalized_target = normalize_search_target(search_target)
     config_signature, base_ref, head_ref = diff_signature(
@@ -903,6 +973,8 @@ def prepare_diff_search_index(
         exclude_globs,
         diff_base_ref,
         diff_head_ref,
+        branch_ref,
+        first_parent,
     )
     # Reading/parsing the patch is cheap compared with embedding it and is
     # necessary for working-tree searches: refs alone do not change when an
@@ -916,11 +988,18 @@ def prepare_diff_search_index(
         exclude_globs,
         diff_base_ref,
         diff_head_ref,
+        branch_ref,
+        first_parent,
     )
     units = (
         build_commit_diff_units(hunks)
         if normalized_target == "diff_commits"
         else [dict(hunk) for hunk in hunks]
+    )
+    commit_count = (
+        len({commit_result_key(unit) for unit in units})
+        if normalized_target == "diff_commits"
+        else 0
     )
     signature = diff_content_signature(config_signature, units, normalized_target)
     hunk_build_ms = (time.perf_counter() - start) * 1000
@@ -989,6 +1068,7 @@ def prepare_diff_search_index(
     return {
         "num_diff_hunks": len(diff_search_state.hunks),
         "num_diff_units": len(diff_search_state.units),
+        "num_diff_commits": commit_count,
         "num_files": diff_search_state.file_count,
         "diff_cache_hit": hunk_cache_hit,
         "diff_embedding_cache_hit": embedding_cache_hit,
@@ -996,6 +1076,8 @@ def prepare_diff_search_index(
         "diff_compare": display_diff_compare(base_ref, head_ref),
         "diff_base_ref": base_ref,
         "diff_head_ref": head_ref,
+        "branch_ref": sanitize_git_ref(branch_ref),
+        "first_parent": bool(first_parent),
         "diff_prepared_at": diff_search_state.last_prepared,
         "diff_hunk_build_ms": round(diff_search_state.hunk_build_ms, 1),
         "index_embedding_ms": round(index_embedding_ms, 1),
@@ -1020,6 +1102,8 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         req.diff_base_ref,
         req.diff_head_ref,
         req.force_diff_refresh,
+        req.branch_ref,
+        req.first_parent,
     )
     units = diff_search_state.units
     needs_embeddings = search_mode in {"semantic", "hybrid"}
@@ -1064,10 +1148,22 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
     if search_mode == "keyword":
         matches = keyword_search_matches(units, req.query)
         found = []
-        for rank, unit_index in enumerate(list(matches)[:req.top_k], start=1):
+        matched_indices = list(matches)
+        if search_target == "diff_commits":
+            seen_commits: set[str] = set()
+            unique_commit_indices = []
+            for unit_index in matched_indices:
+                key = commit_result_key(units[unit_index])
+                if key in seen_commits:
+                    continue
+                seen_commits.add(key)
+                unique_commit_indices.append(unit_index)
+            matched_indices = unique_commit_indices
+        for rank, unit_index in enumerate(matched_indices[:req.top_k], start=1):
             found.append(build_hunk_result(rank, unit_index, None, 0.0, 0.0, extra={
                 "distance": None,
                 "hybrid_score": None,
+                "commit_score_aggregation": "first_matching_file" if search_target == "diff_commits" else None,
                 "keyword_match": True,
                 "matched_keywords": matches[unit_index],
             }))
@@ -1131,7 +1227,9 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         else:
             score = (semantic_weight * semantic_score) + ((1.0 - semantic_weight) * bm25_score)
         ranked.append((score, semantic_score, bm25_score, unit_index))
-    ranked.sort(key=lambda item: item[0], reverse=True)
+    ranked.sort(key=lambda item: (-item[0], item[3]))
+    if search_target == "diff_commits":
+        ranked = collapse_commit_file_ranking(ranked, units)
 
     found = []
     for rank, (score, semantic_score, bm25_score, unit_index) in enumerate(ranked[:req.top_k], start=1):
@@ -1184,6 +1282,8 @@ async def prepare_diff_search_api(req: PrepareDiffSearchRequest):
                 req.diff_base_ref,
                 req.diff_head_ref,
                 req.force,
+                req.branch_ref,
+                req.first_parent,
             )
         except progress.OperationCancelled:
             return {"cancelled": True, "message": "Diff preparation cancelled.", "results": []}

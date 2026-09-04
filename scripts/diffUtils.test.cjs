@@ -3,6 +3,7 @@ const assert = require('node:assert/strict');
 const {
   buildCommitUrl,
   formatDiffRange,
+  normalizeCommitBranchLimit,
   normalizeCommitPage,
   normalizeDiffSearchTarget,
   normalizeSearchMode,
@@ -15,6 +16,13 @@ test('normalizes commit graph pagination safely', () => {
   assert.deepEqual(normalizeCommitPage(undefined, undefined), { limit: 200, offset: 0 });
   assert.deepEqual(normalizeCommitPage(250, 400), { limit: 250, offset: 400 });
   assert.deepEqual(normalizeCommitPage(5000, -10), { limit: 1000, offset: 0 });
+});
+
+test('normalizes the visible branch limit to supported UI values', () => {
+  assert.equal(normalizeCommitBranchLimit(undefined), 5);
+  assert.equal(normalizeCommitBranchLimit(0), 0);
+  assert.equal(normalizeCommitBranchLimit(10), 10);
+  assert.equal(normalizeCommitBranchLimit(7), 5);
 });
 
 test('normalizes diff-only search options', () => {
