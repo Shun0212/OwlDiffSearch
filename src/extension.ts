@@ -14,6 +14,7 @@ import {
 	normalizeSearchMode,
 	parseGlobPatterns,
 	validateGitRef,
+	withDocumentationExcludes,
 } from './diffUtils';
 import { buildDiffSearchWebviewHtml } from './webviewHtml';
 
@@ -1163,7 +1164,10 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 const searchMode = normalizeSearchMode(msg.searchMode);
                                 const searchTarget = normalizeDiffSearchTarget(msg.searchTarget);
                                 const includeGlobs = parseGlobPatterns(msg.includePatterns);
-                                const excludeGlobs = parseGlobPatterns(msg.excludePatterns);
+                                const excludeGlobs = withDocumentationExcludes(
+									parseGlobPatterns(msg.excludePatterns),
+									Boolean(msg.excludeDocumentation)
+								);
                                 let diffBaseRef = '';
                                 let diffHeadRef = '';
 				let branchRef = '';
@@ -1342,7 +1346,10 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				const searchMode = normalizeSearchMode(msg.searchMode);
 				const searchTarget = normalizeDiffSearchTarget(msg.searchTarget);
 				const includeGlobs = parseGlobPatterns(msg.includePatterns);
-				const excludeGlobs = parseGlobPatterns(msg.excludePatterns);
+				const excludeGlobs = withDocumentationExcludes(
+					parseGlobPatterns(msg.excludePatterns),
+					Boolean(msg.excludeDocumentation)
+				);
 				let diffBaseRef = '';
 				let diffHeadRef = '';
 				let branchRef = '';

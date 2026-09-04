@@ -1,6 +1,27 @@
 export type DiffSearchMode = 'semantic' | 'hybrid' | 'bm25' | 'keyword';
 export type DiffSearchTarget = 'diff_hunks' | 'diff_commits';
 
+export const DOCUMENTATION_EXCLUDE_GLOBS = [
+	'**/*.md',
+	'**/*.mdx',
+	'**/*.markdown',
+	'**/*.rst',
+	'**/*.rest',
+	'**/*.adoc',
+	'**/*.asciidoc',
+	'**/*.org',
+	'**/README',
+	'**/CHANGELOG',
+	'**/CHANGES',
+	'**/HISTORY',
+	'**/LICENSE',
+	'**/NOTICE',
+	'**/AUTHORS',
+	'**/CONTRIBUTING',
+	'**/CODE_OF_CONDUCT',
+	'**/SECURITY',
+] as const;
+
 export type CommitPage = {
 	limit: number;
 	offset: number;
@@ -61,6 +82,13 @@ export function parseGlobPatterns(value: unknown): string[] {
 		}
 	}
 	return patterns;
+}
+
+export function withDocumentationExcludes(patterns: string[], enabled: boolean): string[] {
+	if (!enabled) {
+		return [...patterns];
+	}
+	return [...new Set([...patterns, ...DOCUMENTATION_EXCLUDE_GLOBS])];
 }
 
 export function validateGitRef(value: unknown): string {

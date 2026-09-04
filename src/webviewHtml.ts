@@ -67,114 +67,124 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <button id="searchBtn">Search</button>
     </div>
 
-    <div id="diffRangeBar" class="diff-range-bar" aria-label="Active diff range">
-      <span class="diff-range-bar-label">Active range</span>
-      <span id="activeBaseRef" class="active-range-ref active-range-base">HEAD</span>
-      <span class="active-range-arrow" aria-hidden="true">→</span>
-      <span id="activeHeadRef" class="active-range-ref active-range-head">working tree</span>
-    </div>
-
     <section class="diff-control-card" aria-label="Diff search options">
-      <div class="option-row compact-row">
-        <span>Detected code languages</span>
-        <div class="detected-languages" id="detectedLanguages">${detectedLanguageBadges}</div>
-      </div>
-
-      <div class="option-row stacked-row">
-        <span>Search mode</span>
-        <div class="segmented-control" data-select="searchModeSelect" role="group" aria-label="Search mode">
-          <button type="button" class="segment-btn active" data-value="semantic">Semantic</button>
-          <button type="button" class="segment-btn" data-value="hybrid">Hybrid</button>
-          <button type="button" class="segment-btn" data-value="bm25">BM25</button>
-          <button type="button" class="segment-btn" data-value="keyword">Keyword</button>
-        </div>
-        <select id="searchModeSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
-          <option value="semantic" selected>Semantic</option>
-          <option value="hybrid">Hybrid</option>
-          <option value="bm25">BM25</option>
-          <option value="keyword">Keyword</option>
-        </select>
-      </div>
-
-      <div class="option-row stacked-row">
-        <span>Search unit</span>
-        <div class="segmented-control" data-select="searchTargetSelect" role="group" aria-label="Search unit">
-          <button type="button" class="segment-btn active" data-value="diff_hunks">Hunks</button>
-          <button type="button" class="segment-btn" data-value="diff_commits">Commits</button>
-        </div>
-        <select id="searchTargetSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
-          <option value="diff_hunks" selected>Unified diff hunks</option>
-          <option value="diff_commits">Commits scored by best file diff</option>
-        </select>
-      </div>
-
-      <details class="option-panel target-filter-panel" id="targetFilterPanel">
+      <details class="option-panel search-settings-panel" id="searchSettingsPanel">
         <summary>
-          <span>Target filters</span>
-          <span class="option-summary" id="targetFilterSummary">All text files</span>
+          <span>Settings</span>
+          <span class="option-summary settings-state-summary" id="settingsStateSummary">
+            <span class="settings-branch-name" id="settingsBranchName">All branches</span>
+            <span aria-hidden="true"> · </span>
+            <span id="settingsToggleSummary">No docs on · JA→EN off</span>
+          </span>
         </summary>
-        <div class="target-filter-body">
-          <label>
-            <span>Include</span>
-            <input id="includePatternsInput" type="text" spellcheck="false" placeholder="src/**, .py">
-          </label>
-          <label>
-            <span>Exclude</span>
-            <input id="excludePatternsInput" type="text" spellcheck="false" placeholder="tests/**, docs/**">
-          </label>
-          <div class="filter-note">Comma-separated repository paths or globs. Leave blank to search all text-file diffs.</div>
-        </div>
-      </details>
+        <div class="search-settings-body">
+          <section class="settings-group search-behavior-settings" aria-labelledby="searchBehaviorHeading">
+            <div class="settings-group-heading" id="searchBehaviorHeading">Search behavior</div>
+            <div class="option-row compact-row">
+              <span>Detected code languages</span>
+              <div class="detected-languages" id="detectedLanguages">${detectedLanguageBadges}</div>
+            </div>
+            <div class="option-row stacked-row">
+              <span>Search mode</span>
+              <div class="segmented-control" data-select="searchModeSelect" role="group" aria-label="Search mode">
+                <button type="button" class="segment-btn active" data-value="semantic">Semantic</button>
+                <button type="button" class="segment-btn" data-value="hybrid">Hybrid</button>
+                <button type="button" class="segment-btn" data-value="bm25">BM25</button>
+                <button type="button" class="segment-btn" data-value="keyword">Keyword</button>
+              </div>
+              <select id="searchModeSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
+                <option value="semantic" selected>Semantic</option>
+                <option value="hybrid">Hybrid</option>
+                <option value="bm25">BM25</option>
+                <option value="keyword">Keyword</option>
+              </select>
+            </div>
+            <div class="option-row stacked-row">
+              <span>Search unit</span>
+              <div class="segmented-control" data-select="searchTargetSelect" role="group" aria-label="Search unit">
+                <button type="button" class="segment-btn active" data-value="diff_hunks">Hunks</button>
+                <button type="button" class="segment-btn" data-value="diff_commits">Commits</button>
+              </div>
+              <select id="searchTargetSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
+                <option value="diff_hunks" selected>Unified diff hunks</option>
+                <option value="diff_commits">Commits scored by best file diff</option>
+              </select>
+            </div>
+          </section>
 
-      <details class="option-panel diff-range-panel" open>
-        <summary>
-          <span>Compare range</span>
-          <span class="option-summary" id="rangeSummary">HEAD → working tree</span>
-        </summary>
-        <div class="diff-options">
-          <div class="range-editor" aria-label="Compare range endpoints">
-            <div class="range-editor-heading">
-              <span>Range endpoints</span>
-              <span>Base → Head</span>
+          <section class="settings-group target-filter-body" aria-labelledby="targetFilterHeading">
+            <div class="settings-group-heading" id="targetFilterHeading">
+              <span>Target filters</span>
+              <span class="option-summary" id="targetFilterSummary">No docs</span>
             </div>
-            <label class="range-endpoint range-endpoint-base" for="diffBaseRefInput">
-              <span class="range-endpoint-badge">BASE</span>
-              <span class="range-endpoint-body">
-                <span class="range-endpoint-title">Start from</span>
-                <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="baseEndpointHint">
-                <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set Base</span>
-              </span>
+            <label>
+              <span>Include</span>
+              <input id="includePatternsInput" type="text" spellcheck="false" placeholder="src/**, .py">
             </label>
-            <div class="range-endpoint-connector" aria-hidden="true">
-              <span>↓</span>
-              <span>compare changes up to</span>
+            <label>
+              <span>Exclude</span>
+              <input id="excludePatternsInput" type="text" spellcheck="false" placeholder="tests/**, docs/**">
+            </label>
+            <label class="target-filter-toggle">
+              <input type="checkbox" id="excludeDocumentationToggle" checked>
+              <span>Exclude documentation files</span>
+            </label>
+            <div class="filter-note">Excludes Markdown, reStructuredText, AsciiDoc, Org, and common extensionless documentation files. Dependency manifests remain searchable.</div>
+            <div class="filter-note">Comma-separated repository paths or globs. Leave blank to search all text-file diffs.</div>
+          </section>
+
+          <section class="settings-group range-settings-body" aria-labelledby="rangeSettingsHeading">
+            <div class="settings-group-heading" id="rangeSettingsHeading">
+              <span>Compare range</span>
+              <span class="option-summary" id="rangeSummary">HEAD → working tree</span>
             </div>
-            <label class="range-endpoint range-endpoint-head" for="diffHeadRefInput">
-              <span class="range-endpoint-badge">HEAD</span>
-              <span class="range-endpoint-body">
-                <span class="range-endpoint-title">End at</span>
-                <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="Working tree (default)" aria-describedby="headEndpointHint">
-                <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set Head</span>
-              </span>
+            <div id="diffRangeBar" class="diff-range-bar" aria-label="Active diff range">
+              <span class="diff-range-bar-label">Active range</span>
+              <span id="activeBaseRef" class="active-range-ref active-range-base">HEAD</span>
+              <span class="active-range-arrow" aria-hidden="true">→</span>
+              <span id="activeHeadRef" class="active-range-ref active-range-head">working tree</span>
+            </div>
+            <div class="range-editor" aria-label="Compare range endpoints">
+              <div class="range-editor-heading">
+                <span>Range endpoints</span>
+                <span>Base → Head</span>
+              </div>
+              <label class="range-endpoint range-endpoint-base" for="diffBaseRefInput">
+                <span class="range-endpoint-badge">BASE</span>
+                <span class="range-endpoint-body">
+                  <span class="range-endpoint-title">Start from</span>
+                  <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="baseEndpointHint">
+                  <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set Base</span>
+                </span>
+              </label>
+              <div class="range-endpoint-connector" aria-hidden="true">
+                <span>↓</span>
+                <span>compare changes up to</span>
+              </div>
+              <label class="range-endpoint range-endpoint-head" for="diffHeadRefInput">
+                <span class="range-endpoint-badge">HEAD</span>
+                <span class="range-endpoint-body">
+                  <span class="range-endpoint-title">End at</span>
+                  <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="Working tree (default)" aria-describedby="headEndpointHint">
+                  <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set Head</span>
+                </span>
+              </label>
+            </div>
+            <div class="diff-actions">
+              <button type="button" id="refreshDiffSearchBtn" class="secondary-action">Check for changes</button>
+            </div>
+            <div id="diffStatus" class="diff-status"></div>
+          </section>
+
+          <section class="settings-group history-settings-body" aria-labelledby="historySettingsHeading">
+            <div class="settings-group-heading" id="historySettingsHeading">Commit history</div>
+            <label class="commit-branch-picker">
+              <span class="commit-branch-picker-label">Branch</span>
+              <select id="commitBranchFilterSelect" aria-label="Branch shown in the commit tree and diff search">
+                <option value="">All visible branches</option>
+              </select>
             </label>
-          </div>
-          <div class="diff-actions">
-            <button type="button" id="refreshDiffSearchBtn" class="secondary-action">Check for changes</button>
-            <button type="button" id="reloadCommitsBtn" class="secondary-action">Reload commits</button>
-          </div>
-          <div id="diffStatus" class="diff-status"></div>
-          <label class="commit-branch-picker">
-            <span class="commit-branch-picker-label">Branch</span>
-            <select id="commitBranchFilterSelect" aria-label="Branch shown in the commit tree and diff search">
-              <option value="">All visible branches</option>
-            </select>
-          </label>
-          <details class="tree-filter-panel">
-            <summary>
-              <span>More tree options</span>
-              <span class="option-summary" id="treeFilterSummary">Max 5 · full history</span>
-            </summary>
-            <div class="tree-filter-body">
+            <div class="history-settings-fields">
               <label>
                 <span>Max branches</span>
                 <select id="commitBranchLimitSelect">
@@ -193,38 +203,43 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                   <option value="first_parent">First parent</option>
                 </select>
               </label>
-              <div class="filter-note">Selecting a branch uses it as Head for both the tree and search. Full history includes commits from merged branches. First parent keeps the branch's mainline and represents merged work at the merge commit.</div>
             </div>
-          </details>
-          <div class="commit-graph-wrap">
-            <div class="commit-graph-toolbar">
-              <span class="commit-graph-hint">Click = Base · Shift+Click = Head · Scroll for older commits</span>
+            <div class="diff-actions">
+              <button type="button" id="reloadCommitsBtn" class="secondary-action">Reload commits</button>
             </div>
-            <div class="commit-graph" id="commitGraph">
-              <div class="commit-graph-empty">Loading commits…</div>
+            <div class="filter-note">Selecting a branch uses it as Head for both the tree and search. Full history includes commits from merged branches. First parent keeps the branch's mainline and represents merged work at the merge commit.</div>
+          </section>
+
+          <section class="settings-group translation-body" aria-labelledby="translationSettingsHeading">
+            <div class="settings-group-heading" id="translationSettingsHeading">
+              <span>Japanese-to-English translation</span>
+              <span class="option-summary" id="translationSummary">Off</span>
             </div>
-          </div>
+            <label class="translation-toggle">
+              <input type="checkbox" id="translateToggle">
+              <span>Translate JP → EN with Gemini</span>
+            </label>
+            <select id="geminiModelSelect" title="Gemini translation model">
+              <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
+              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
+              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+            </select>
+            <div class="translation-note">Set <code>owlDiffSearch.geminiApiKey</code> in VS Code Settings.</div>
+          </section>
         </div>
       </details>
 
-      <details class="option-panel translation-settings" id="translationPanel">
-        <summary>
-          <span>Japanese-to-English translation</span>
-          <span class="option-summary" id="translationSummary">Off</span>
-        </summary>
-        <div class="translation-body">
-          <label class="translation-toggle">
-            <input type="checkbox" id="translateToggle">
-            <span>Translate JP → EN with Gemini</span>
-          </label>
-          <select id="geminiModelSelect" title="Gemini translation model">
-            <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-            <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-            <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
-          </select>
-          <div class="translation-note">Set <code>owlDiffSearch.geminiApiKey</code> in VS Code Settings.</div>
+      <div class="history-browser" aria-label="Commit history">
+        <div class="commit-graph-wrap">
+          <div class="commit-graph-toolbar">
+            <span class="commit-graph-hint">Click = Base · Shift+Click = Head · Scroll for older commits</span>
+            <span class="commit-range-legend" id="commitRangeLegend" hidden></span>
+          </div>
+          <div class="commit-graph" id="commitGraph">
+            <div class="commit-graph-empty">Loading commits…</div>
+          </div>
         </div>
-      </details>
+      </div>
     </section>
 
     <div class="status-row" aria-live="polite">

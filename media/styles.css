@@ -183,6 +183,10 @@ input[type="text"]::placeholder {
   font-size: 0.74em;
 }
 
+.range-settings-body .diff-range-bar {
+  margin-bottom: 0;
+}
+
 .diff-range-bar-label {
   grid-column: 1 / -1;
   color: var(--vscode-descriptionForeground, #8b949e);
@@ -315,17 +319,46 @@ input[type="text"]::placeholder {
   white-space: nowrap;
 }
 
-.target-filter-body,
-.diff-options,
-.translation-body {
+.settings-state-summary {
+  min-width: 0;
+  max-width: 72%;
+  opacity: 0.72;
+}
+
+.settings-branch-name {
+  color: var(--settings-branch-color, var(--vscode-textLink-foreground, #4f9cff));
+  font-weight: 600;
+}
+
+.search-settings-body {
   display: grid;
-  gap: 0.5em;
-  padding: 0.55em;
+  gap: 0;
   border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
 }
 
+.settings-group {
+  display: grid;
+  gap: 0.5em;
+  padding: 0.55em;
+}
+
+.settings-group + .settings-group {
+  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
+}
+
+.settings-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 0;
+  gap: 0.6em;
+  color: var(--vscode-foreground, #cccccc);
+  font-size: 0.76em;
+  font-weight: 700;
+}
+
 .target-filter-body label,
-.diff-options label {
+.range-settings-body label {
   display: grid;
   grid-template-columns: 4.4em minmax(0, 1fr);
   align-items: center;
@@ -335,9 +368,24 @@ input[type="text"]::placeholder {
 }
 
 .target-filter-body input,
-.diff-options input {
+.range-settings-body input {
   width: 100%;
   min-width: 0;
+}
+
+.target-filter-body .target-filter-toggle {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 0.45em;
+  color: var(--vscode-foreground, #cccccc);
+  cursor: pointer;
+}
+
+.target-filter-body .target-filter-toggle input {
+  width: auto;
+  min-width: auto;
+  accent-color: var(--vscode-button-background, #0078d4);
 }
 
 .filter-note,
@@ -400,7 +448,7 @@ input[type="text"]::placeholder {
   font-weight: 400;
 }
 
-.diff-options .range-endpoint {
+.range-settings-body .range-endpoint {
   display: grid;
   grid-template-columns: 3.6em minmax(0, 1fr);
   align-items: stretch;
@@ -499,6 +547,11 @@ input[type="text"]::placeholder {
   background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.08));
 }
 
+.history-browser {
+  display: grid;
+  gap: 0.55em;
+}
+
 .commit-branch-picker-label {
   color: var(--vscode-descriptionForeground, #8b949e);
   font-size: 0.75em;
@@ -518,48 +571,12 @@ input[type="text"]::placeholder {
   cursor: pointer;
 }
 
-.tree-filter-panel {
-  overflow: hidden;
-  border: 1px solid var(--vscode-input-border, rgba(128, 128, 128, 0.28));
-  border-radius: 5px;
-  background: var(--vscode-editor-background, transparent);
-}
-
-.tree-filter-panel > summary {
-  display: flex;
-  align-items: center;
-  gap: 0.5em;
-  padding: 0.42em 0.5em;
-  cursor: pointer;
-  color: var(--vscode-foreground, #cccccc);
-  font-size: 0.78em;
-  font-weight: 600;
-  list-style: none;
-}
-
-.tree-filter-panel > summary::-webkit-details-marker {
-  display: none;
-}
-
-.tree-filter-panel > summary::before {
-  content: ">";
-  color: var(--vscode-descriptionForeground, #8b949e);
-  transform: rotate(0deg);
-  transition: transform 0.15s;
-}
-
-.tree-filter-panel[open] > summary::before {
-  transform: rotate(90deg);
-}
-
-.tree-filter-body {
+.history-settings-fields {
   display: grid;
   gap: 0.48em;
-  padding: 0.5em;
-  border-top: 1px solid var(--vscode-sideBarSectionHeader-border, rgba(128, 128, 128, 0.2));
 }
 
-.tree-filter-body label {
+.history-settings-fields label {
   display: grid;
   grid-template-columns: 6.8em minmax(0, 1fr);
   align-items: center;
@@ -568,7 +585,7 @@ input[type="text"]::placeholder {
   font-size: 0.78em;
 }
 
-.tree-filter-body select {
+.history-settings-fields select {
   width: 100%;
   min-width: 0;
 }
@@ -613,9 +630,17 @@ input[type="text"]::placeholder {
 }
 
 .commit-graph-toolbar {
+  display: grid;
+  gap: 0.18em;
   padding: 0.32em 0.45em;
   border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, #3c3c3c);
   background: var(--vscode-sideBarSectionHeader-background, rgba(128, 128, 128, 0.05));
+}
+
+.commit-range-legend {
+  color: var(--vscode-charts-green, #22b07d);
+  font-size: 0.72em;
+  font-weight: 700;
 }
 
 .commit-graph-hint,
@@ -667,6 +692,26 @@ input[type="text"]::placeholder {
   stroke-width: 2;
 }
 
+.commit-graph-svg .commit-edge.is-in-range {
+  stroke: var(--vscode-charts-green, #22b07d);
+  stroke-width: 3.2;
+}
+
+.commit-graph-svg .commit-node.is-in-range {
+  stroke: var(--vscode-charts-green, #22b07d);
+  stroke-width: 3;
+}
+
+.commit-graph-svg .commit-node.is-base {
+  stroke: var(--vscode-textLink-foreground, #4f9cff);
+  stroke-width: 3.5;
+}
+
+.commit-graph-svg .commit-node.is-head {
+  stroke: var(--vscode-charts-yellow, #e0a23a);
+  stroke-width: 3.5;
+}
+
 .commit-rows {
   min-width: 0;
 }
@@ -692,6 +737,11 @@ input[type="text"]::placeholder {
 .commit-row:hover {
   border-left-color: var(--vscode-charts-blue, #3794ff);
   background: var(--vscode-list-hoverBackground, rgba(128, 128, 128, 0.12));
+}
+
+.commit-row.is-in-range {
+  border-left-color: var(--vscode-charts-green, #22b07d);
+  background: rgba(34, 176, 125, 0.1);
 }
 
 .commit-row.is-base {
@@ -720,6 +770,13 @@ input[type="text"]::placeholder {
   background: var(--vscode-badge-background, #4d4d4d);
   color: var(--vscode-badge-foreground, #ffffff);
   font-size: 0.86em;
+}
+
+.commit-ref {
+  border: 1px solid var(--commit-ref-color, var(--vscode-textLink-foreground, #4f9cff));
+  background: color-mix(in srgb, var(--commit-ref-color, #4f9cff) 18%, transparent);
+  color: var(--commit-ref-color, var(--vscode-textLink-foreground, #4f9cff));
+  font-weight: 700;
 }
 
 .commit-subject {

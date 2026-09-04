@@ -10,6 +10,7 @@ const {
   parseGlobPatterns,
   refsForResult,
   validateGitRef,
+  withDocumentationExcludes,
 } = require('../out/diffUtils.js');
 
 test('normalizes commit graph pagination safely', () => {
@@ -39,6 +40,17 @@ test('parses compact include and exclude glob input', () => {
     ['src/**', '*.py', 'packages/api/**'],
   );
   assert.deepEqual(parseGlobPatterns(['tests/**', null, ' docs/** ']), ['tests/**', 'docs/**']);
+});
+
+test('optionally adds documentation exclusions without hiding dependency manifests', () => {
+  const original = ['tests/**', '**/*.md'];
+  assert.deepEqual(withDocumentationExcludes(original, false), original);
+  const excluded = withDocumentationExcludes(original, true);
+  assert.equal(excluded.filter((pattern) => pattern === '**/*.md').length, 1);
+  assert.ok(excluded.includes('**/*.rst'));
+  assert.ok(excluded.includes('**/README'));
+  assert.ok(!excluded.includes('**/*.json'));
+  assert.ok(!excluded.includes('**/*.txt'));
 });
 
 test('validates Git refs and formats ranges', () => {

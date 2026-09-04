@@ -35,7 +35,7 @@ test('loads the commit graph through the end of local history', () => {
 
 test('filters the commit tree and diff search by branch and traversal', () => {
   assert.match(htmlBuilder, /class="commit-branch-picker"/);
-  assert.match(htmlBuilder, /<span>More tree options<\/span>/);
+  assert.doesNotMatch(htmlBuilder, />More tree options</);
   assert.match(htmlBuilder, /id="commitBranchFilterSelect"/);
   assert.match(htmlBuilder, /id="commitBranchLimitSelect"/);
   assert.match(htmlBuilder, /id="commitTraversalSelect"/);
@@ -54,7 +54,7 @@ test('filters the commit tree and diff search by branch and traversal', () => {
   assert.match(extension, /first_parent: !!msg\.firstParent/);
 });
 
-test('keeps Base and Head visible as explicit range endpoints', () => {
+test('keeps Base and Head available as explicit range endpoints in Settings', () => {
   assert.match(htmlBuilder, /id="activeBaseRef"/);
   assert.match(htmlBuilder, /id="activeHeadRef"/);
   assert.match(htmlBuilder, /class="range-endpoint range-endpoint-base"/);
@@ -64,7 +64,7 @@ test('keeps Base and Head visible as explicit range endpoints', () => {
   assert.match(script, /function effectiveRangeRefs\(\)/);
   assert.match(script, /headEndpoint\?\.classList\.toggle\('is-overridden'/);
   assert.match(declarationBlock('.diff-range-bar'), /grid-template-columns\s*:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);
-  assert.match(declarationBlock('.diff-options .range-endpoint'), /grid-template-columns\s*:\s*3\.6em minmax\(0, 1fr\)/);
+  assert.match(declarationBlock('.range-settings-body .range-endpoint'), /grid-template-columns\s*:\s*3\.6em minmax\(0, 1fr\)/);
 });
 
 test('renders determinate embedding progress from the start of the track', () => {
@@ -98,12 +98,67 @@ test('keeps the standalone UI English-first with hunk and commit diff units', ()
   assert.doesNotMatch(htmlBuilder, /<select id="languageSelect"/);
   assert.match(script, /lang:\s*'auto'/);
   assert.match(htmlBuilder, />Target filters</);
-  assert.match(htmlBuilder, />All text files</);
+  assert.match(htmlBuilder, />No docs</);
+  assert.match(script, /'All text files'/);
   assert.match(htmlBuilder, /search all text-file diffs/);
   assert.match(htmlBuilder, /id="includePatternsInput"/);
   assert.match(htmlBuilder, /id="excludePatternsInput"/);
+  assert.match(htmlBuilder, /id="excludeDocumentationToggle" checked/);
+  assert.match(htmlBuilder, />Exclude documentation files</);
   assert.match(script, /includePatterns:/);
   assert.match(script, /excludePatterns:/);
+  assert.match(script, /excludeDocumentation:/);
+});
+
+test('consolidates low-frequency controls behind one Settings item', () => {
+  assert.match(htmlBuilder, /id="searchSettingsPanel"/);
+  assert.match(htmlBuilder, />Settings</);
+  assert.match(htmlBuilder, /id="settingsStateSummary"/);
+  assert.match(htmlBuilder, /id="settingsBranchName">All branches</);
+  assert.match(htmlBuilder, /id="settingsToggleSummary">No docs on · JA→EN off</);
+  assert.match(htmlBuilder, />Target filters</);
+  assert.match(htmlBuilder, />Compare range</);
+  assert.match(htmlBuilder, />Japanese-to-English translation</);
+  assert.doesNotMatch(htmlBuilder, /class="option-panel target-filter-panel"/);
+  assert.doesNotMatch(htmlBuilder, /class="option-panel diff-range-panel"/);
+  assert.doesNotMatch(htmlBuilder, /class="option-panel translation-settings"/);
+  assert.match(script, /function updateSettingsStateSummary\(\)/);
+  assert.match(script, /commitBranchFilter \|\| 'All branches'/);
+  assert.match(script, /--settings-branch-color/);
+  assert.equal((htmlBuilder.match(/<details class="option-panel/g) || []).length, 1);
+
+  const settingsStart = htmlBuilder.indexOf('id="searchSettingsPanel"');
+  const settingsEnd = htmlBuilder.indexOf('</details>', htmlBuilder.indexOf('id="searchSettingsPanel"'));
+  const settingsState = htmlBuilder.indexOf('id="settingsStateSummary"');
+  const detectedLanguages = htmlBuilder.indexOf('id="detectedLanguages"');
+  const searchMode = htmlBuilder.indexOf('id="searchModeSelect"');
+  const searchUnit = htmlBuilder.indexOf('id="searchTargetSelect"');
+  const activeRange = htmlBuilder.indexOf('id="diffRangeBar"');
+  const branchPicker = htmlBuilder.indexOf('class="commit-branch-picker"');
+  const historyOptions = htmlBuilder.indexOf('id="commitBranchLimitSelect"');
+  const commitGraph = htmlBuilder.indexOf('id="commitGraph"');
+  [settingsState, detectedLanguages, searchMode, searchUnit, activeRange, branchPicker, historyOptions].forEach((position) => {
+    assert.ok(position > settingsStart && position < settingsEnd, 'secondary controls should stay inside Settings');
+  });
+  assert.ok(commitGraph > settingsEnd, 'commit graph should remain visible outside Settings');
+});
+
+test('highlights the visible commit range across rows, nodes, and edges', () => {
+  assert.match(htmlBuilder, /id="commitRangeLegend" hidden/);
+  assert.match(script, /function resolveGraphRef\(ref, commits\)/);
+  assert.match(script, /function computeRangeCommitHashes\(baseHash, headHash, commits\)/);
+  assert.match(script, /classList\.toggle\('is-in-range', rangeHashes\.has\(hash\)\)/);
+  assert.match(script, /parentHash === baseHash/);
+  assert.match(script, /Target range · \$\{shortRef\(base\)\} → \$\{shortRef\(head\)\}/);
+  assert.match(declarationBlock('.commit-row.is-in-range'), /background\s*:\s*rgba\(34, 176, 125, 0\.1\)/);
+  assert.match(declarationBlock('.commit-graph-svg .commit-edge.is-in-range'), /stroke-width\s*:\s*3\.2/);
+});
+
+test('assigns stable colors to branch labels', () => {
+  assert.match(script, /function branchColor\(value\)/);
+  assert.match(script, /--commit-ref-color: \$\{branchColor\(label\)\}/);
+  assert.match(declarationBlock('.commit-ref'), /color\s*:\s*var\(--commit-ref-color/);
+  assert.match(declarationBlock('.settings-branch-name'), /--settings-branch-color/);
 });
 
 test('keeps result cards compact without inline diff bodies', () => {

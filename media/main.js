@@ -37,6 +37,38 @@
     return `${base} → ${head}`;
   }
 
+  function targetFilterText() {
+    const includeCount = splitPatterns(byId('includePatternsInput')?.value).length;
+    const excludeCount = splitPatterns(byId('excludePatternsInput')?.value).length;
+    const parts = [];
+    if (includeCount) parts.push(`Include ${includeCount}`);
+    if (excludeCount) parts.push(`Exclude ${excludeCount}`);
+    if (byId('excludeDocumentationToggle')?.checked) parts.push('No docs');
+    return parts.length ? parts.join(' · ') : 'All text files';
+  }
+
+  function translationText() {
+    const settings = translationSettings();
+    if (!settings.enable) return 'Off';
+    const model = settings.model.replace(/^gemini-/, '');
+    return `On · ${model}`;
+  }
+
+  function updateSettingsStateSummary() {
+    const summary = byId('settingsStateSummary');
+    if (!summary) return;
+    const branch = commitBranchFilter || 'All branches';
+    const noDocs = byId('excludeDocumentationToggle')?.checked ? 'on' : 'off';
+    const translation = translationSettings().enable ? 'on' : 'off';
+    const branchName = byId('settingsBranchName');
+    const toggles = byId('settingsToggleSummary');
+    const value = `${branch} · No docs ${noDocs} · JA→EN ${translation}`;
+    if (branchName) branchName.textContent = branch;
+    if (toggles) toggles.textContent = `No docs ${noDocs} · JA→EN ${translation}`;
+    summary.style.setProperty('--settings-branch-color', branchColor(branch));
+    summary.title = value;
+  }
+
   function effectiveRangeRefs() {
     const baseInput = shortRef(byId('diffBaseRefInput')?.value || '');
     const headInput = shortRef(commitBranchFilter || byId('diffHeadRefInput')?.value || '');
@@ -69,6 +101,7 @@
       searchTarget: byId('searchTargetSelect')?.value || 'diff_hunks',
       includePatterns: byId('includePatternsInput')?.value || '',
       excludePatterns: byId('excludePatternsInput')?.value || '',
+      excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
       commitBranchFilter,
@@ -98,6 +131,10 @@
       const element = byId(id);
       if (element && typeof state[key] === 'string') element.value = state[key];
     });
+    if (typeof state.excludeDocumentation === 'boolean') {
+      const toggle = byId('excludeDocumentationToggle');
+      if (toggle) toggle.checked = state.excludeDocumentation;
+    }
     if (typeof state.commitBranchFilter === 'string') commitBranchFilter = state.commitBranchFilter;
     if ([0, 1, 3, 5, 10, 20].includes(state.commitBranchLimit)) commitBranchLimit = state.commitBranchLimit;
     if (state.commitTraversal === 'full' || state.commitTraversal === 'first_parent') {
@@ -115,14 +152,9 @@
   }
 
   function updateTargetFilterSummary() {
-    const includeCount = splitPatterns(byId('includePatternsInput')?.value).length;
-    const excludeCount = splitPatterns(byId('excludePatternsInput')?.value).length;
     const summary = byId('targetFilterSummary');
-    if (!summary) return;
-    const parts = [];
-    if (includeCount) parts.push(`Include ${includeCount}`);
-    if (excludeCount) parts.push(`Exclude ${excludeCount}`);
-    summary.textContent = parts.length ? parts.join(' · ') : 'All text files';
+    if (summary) summary.textContent = targetFilterText();
+    updateSettingsStateSummary();
   }
 
   function setServerStatus(online, detail) {
@@ -257,9 +289,8 @@
 
   function updateTranslationSummary() {
     const summary = byId('translationSummary');
-    if (!summary) return;
-    const settings = translationSettings();
-    summary.textContent = settings.enable ? `On · ${settings.model.replace(/^gemini-/, '')}` : 'Off';
+    if (summary) summary.textContent = translationText();
+    updateSettingsStateSummary();
   }
 
   function updateTranslationSettings(partial) {
@@ -296,14 +327,7 @@
         ? `Branch “${commitBranchFilter}” is being used as Head`
         : 'Shift+click a commit below to set Head';
     }
-    const summary = byId('treeFilterSummary');
-    if (summary) {
-      const limitLabel = commitBranchFilter
-        ? '1 branch'
-        : commitBranchLimit === 0 ? 'All branches' : `Max ${commitBranchLimit}`;
-      const historyLabel = commitTraversal === 'first_parent' ? 'first parent' : 'full history';
-      summary.textContent = `${limitLabel} · ${historyLabel}`;
-    }
+    updateSettingsStateSummary();
     updateRange();
   }
 
@@ -346,6 +370,7 @@
       commitGraphHasMore = true;
       commitGraphError = '';
       if (graph) graph.innerHTML = '<div class="commit-graph-empty">Loading commits…</div>';
+      highlightCommitSelection();
     }
     commitGraphLoading = true;
     commitGraphRequestId += 1;
@@ -367,6 +392,23 @@
 
   function laneColor(column) {
     return COMMIT_COLORS[((column % COMMIT_COLORS.length) + COMMIT_COLORS.length) % COMMIT_COLORS.length];
+  }
+
+  function normalizeRefLabel(value) {
+    return String(value || '')
+      .trim()
+      .replace(/^HEAD -> /, '')
+      .replace(/^tag: /, '')
+      .replace(/^refs\/(?:heads|remotes)\//, '');
+  }
+
+  function branchColor(value) {
+    const label = normalizeRefLabel(value);
+    let hash = 0;
+    for (let index = 0; index < label.length; index += 1) {
+      hash = ((hash << 5) - hash + label.charCodeAt(index)) | 0;
+    }
+    return COMMIT_COLORS[Math.abs(hash) % COMMIT_COLORS.length];
   }
 
   function computeCommitLayout(commits) {
@@ -415,6 +457,7 @@
     if (!commits.length) {
 	  const emptyMessage = commitGraphLoading ? 'Loading commits…' : (commitGraphError || 'No commits found.');
 	  container.innerHTML = `<div class="commit-graph-empty">${escapeHtml(emptyMessage)}</div>`;
+      highlightCommitSelection();
       return;
     }
 
@@ -440,12 +483,27 @@
         const d = startX === endX
           ? `M ${startX} ${startY} L ${endX} ${endY}`
           : `M ${startX} ${startY} C ${startX} ${midY} ${endX} ${midY} ${endX} ${endY}`;
-        svg.appendChild(svgElement('path', { d, fill: 'none', stroke: laneColor(Math.max(column, parentColumn)), 'stroke-width': 1.6 }));
+        svg.appendChild(svgElement('path', {
+          d,
+          fill: 'none',
+          stroke: laneColor(Math.max(column, parentColumn)),
+          'stroke-width': 1.6,
+          class: 'commit-edge',
+          'data-child-hash': commit.hash,
+          'data-parent-hash': parentHash,
+        }));
       });
     });
     commits.forEach((commit, index) => {
       const column = columns.get(commit.hash) || 0;
-      svg.appendChild(svgElement('circle', { cx: x(column), cy: y(index), r: 4.5, fill: laneColor(column), class: 'commit-node' }));
+      svg.appendChild(svgElement('circle', {
+        cx: x(column),
+        cy: y(index),
+        r: 4.5,
+        fill: laneColor(column),
+        class: 'commit-node',
+        'data-hash': commit.hash,
+      }));
     });
 
     const rows = document.createElement('div');
@@ -458,7 +516,10 @@
       row.style.height = `${COMMIT_ROW_HEIGHT}px`;
       row.dataset.hash = commit.hash;
       row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\nClick: Base · Shift+Click: Head`;
-      const refs = (commit.refs || []).map((ref) => `<span class="commit-ref">${escapeHtml(ref.replace(/^HEAD -> /, ''))}</span>`).join('');
+      const refs = (commit.refs || []).map((ref) => {
+        const label = normalizeRefLabel(ref);
+        return `<span class="commit-ref" style="--commit-ref-color: ${branchColor(label)}">${escapeHtml(label)}</span>`;
+      }).join('');
       row.innerHTML =
         `<span class="commit-hash">${escapeHtml(commit.short)}</span>` +
         refs +
@@ -509,14 +570,76 @@
     return Boolean(ref && hash && (ref === hash || (ref.length >= 4 && hash.startsWith(ref))));
   }
 
+  function resolveGraphRef(ref, commits) {
+    const value = String(ref || '').trim();
+    if (!value || value.toLowerCase() === 'working tree') return '';
+    const hashMatch = commits.find((commit) => matchesRef(value, commit.hash));
+    if (hashMatch) return hashMatch.hash;
+    if (/^[0-9a-f]{40}$/i.test(value)) return value;
+    if (value.toUpperCase() === 'HEAD') {
+      const headCommit = commits.find((commit) => (commit.refs || []).some((item) => item === 'HEAD' || item.startsWith('HEAD -> ')));
+      return headCommit?.hash || '';
+    }
+    const normalized = normalizeRefLabel(value);
+    const refCommit = commits.find((commit) => (commit.refs || []).some((item) => normalizeRefLabel(item) === normalized));
+    return refCommit?.hash || '';
+  }
+
+  function collectVisibleAncestors(startHash, commitMap) {
+    const ancestors = new Set();
+    const pending = startHash && commitMap.has(startHash) ? [startHash] : [];
+    while (pending.length) {
+      const hash = pending.pop();
+      if (!hash || ancestors.has(hash)) continue;
+      ancestors.add(hash);
+      const commit = commitMap.get(hash);
+      (commit?.parents || []).forEach((parentHash) => {
+        if (commitMap.has(parentHash) && !ancestors.has(parentHash)) pending.push(parentHash);
+      });
+    }
+    return ancestors;
+  }
+
+  function computeRangeCommitHashes(baseHash, headHash, commits) {
+    if (!baseHash || !headHash) return new Set();
+    const commitMap = new Map(commits.map((commit) => [commit.hash, commit]));
+    const range = collectVisibleAncestors(headHash, commitMap);
+    collectVisibleAncestors(baseHash, commitMap).forEach((hash) => range.delete(hash));
+    return range;
+  }
+
   function highlightCommitSelection() {
-    const base = byId('diffBaseRefInput')?.value.trim() || '';
-    const head = byId('diffHeadRefInput')?.value.trim() || '';
+    const { base, head } = effectiveRangeRefs();
+    const baseHash = resolveGraphRef(base, commitGraphData);
+    const headHash = resolveGraphRef(head, commitGraphData);
+    const rangeHashes = computeRangeCommitHashes(baseHash, headHash, commitGraphData);
     document.querySelectorAll('#commitGraph .commit-row').forEach((row) => {
       const hash = row.getAttribute('data-hash') || '';
-      row.classList.toggle('is-base', matchesRef(base, hash));
-      row.classList.toggle('is-head', matchesRef(head, hash));
+      row.classList.toggle('is-in-range', rangeHashes.has(hash));
+      row.classList.toggle('is-base', hash === baseHash);
+      row.classList.toggle('is-head', hash === headHash);
     });
+    document.querySelectorAll('#commitGraph .commit-node').forEach((node) => {
+      const hash = node.getAttribute('data-hash') || '';
+      node.classList.toggle('is-in-range', rangeHashes.has(hash));
+      node.classList.toggle('is-base', hash === baseHash);
+      node.classList.toggle('is-head', hash === headHash);
+    });
+    document.querySelectorAll('#commitGraph .commit-edge').forEach((edge) => {
+      const childHash = edge.getAttribute('data-child-hash') || '';
+      const parentHash = edge.getAttribute('data-parent-hash') || '';
+      const connectsRange = rangeHashes.has(childHash)
+        && (rangeHashes.has(parentHash) || parentHash === baseHash);
+      edge.classList.toggle('is-in-range', connectsRange);
+    });
+    const legend = byId('commitRangeLegend');
+    if (!legend) return;
+    const hasCommitRange = Boolean(baseHash && headHash);
+    legend.hidden = !hasCommitRange;
+    if (hasCommitRange) {
+      const count = rangeHashes.size;
+      legend.textContent = `Target range · ${shortRef(base)} → ${shortRef(head)} · ${count} visible commit${count === 1 ? '' : 's'}`;
+    }
   }
 
   function requestPrepareDiff() {
@@ -531,6 +654,7 @@
       searchTarget,
       includePatterns: byId('includePatternsInput')?.value || '',
       excludePatterns: byId('excludePatternsInput')?.value || '',
+      excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
       branchRef: commitBranchFilter,
@@ -560,6 +684,7 @@
       searchTarget,
       includePatterns: byId('includePatternsInput')?.value || '',
       excludePatterns: byId('excludePatternsInput')?.value || '',
+      excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
       branchRef: commitBranchFilter,
@@ -775,6 +900,10 @@
     ['includePatternsInput', 'excludePatternsInput'].forEach((id) => {
       byId(id)?.addEventListener('input', updateTargetFilterSummary);
       byId(id)?.addEventListener('change', saveState);
+    });
+    byId('excludeDocumentationToggle')?.addEventListener('change', () => {
+      updateTargetFilterSummary();
+      saveState();
     });
     byId('translateToggle')?.addEventListener('change', () => {
       updateTranslationSummary();
