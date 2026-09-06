@@ -157,14 +157,14 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
             <div class="range-editor" aria-label="Compare range endpoints">
               <div class="range-editor-heading">
                 <span>Range endpoints</span>
-                <span>Base → Head</span>
+                <span>From → To</span>
               </div>
               <label class="range-endpoint range-endpoint-base" for="diffBaseRefInput">
-                <span class="range-endpoint-badge">BASE</span>
+                <span class="range-endpoint-badge">FROM</span>
                 <span class="range-endpoint-body">
                   <span class="range-endpoint-title">Start from</span>
                   <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="baseEndpointHint">
-                  <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set Base</span>
+                  <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set From</span>
                 </span>
               </label>
               <div class="range-endpoint-connector" aria-hidden="true">
@@ -172,11 +172,11 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                 <span>compare changes up to</span>
               </div>
               <label class="range-endpoint range-endpoint-head" for="diffHeadRefInput">
-                <span class="range-endpoint-badge">HEAD</span>
+                <span class="range-endpoint-badge">TO</span>
                 <span class="range-endpoint-body">
                   <span class="range-endpoint-title">End at</span>
                   <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="Working tree (default)" aria-describedby="headEndpointHint">
-                  <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set Head</span>
+                  <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set To</span>
                 </span>
               </label>
             </div>
@@ -217,7 +217,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
             <div class="diff-actions">
               <button type="button" id="reloadCommitsBtn" class="secondary-action">Reload commits</button>
             </div>
-            <div class="filter-note">Selecting a branch uses it as Head for both the tree and search. Full history includes commits from merged branches. First parent keeps the branch's mainline and represents merged work at the merge commit.</div>
+            <div class="filter-note">Selecting a branch uses it as To for both the tree and search. Full history includes commits from merged branches. First parent keeps the branch's mainline and represents merged work at the merge commit.</div>
           </section>
 
           <section class="settings-group translation-body" aria-labelledby="translationSettingsHeading">
@@ -242,7 +242,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <div class="history-browser" aria-label="Commit history">
         <div class="commit-graph-wrap">
           <div class="commit-graph-toolbar">
-            <span class="commit-graph-hint">Click = Base · Shift+Click = Head · Scroll for older commits</span>
+            <span class="commit-graph-hint">Click = From · Shift+Click = To · Scroll for older commits</span>
             <span class="commit-range-legend" id="commitRangeLegend" hidden></span>
           </div>
           <div class="commit-graph" id="commitGraph">
@@ -262,7 +262,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <div class="empty-state" id="emptyState">
         <img src="${options.owlPngUri}" alt="" class="empty-owl">
         <div class="empty-title">Ready to search the diff</div>
-        <div class="empty-hint">Blank refs compare HEAD with the working tree.<br>Choose commits above for branch or commit review.</div>
+        <div class="empty-hint">Blank refs compare the current commit (HEAD) with the working tree.<br>Choose commits above for branch or commit review.</div>
       </div>
     </div>
   </main>

@@ -54,13 +54,13 @@ test('filters the commit tree and diff search by branch and traversal', () => {
   assert.match(extension, /first_parent: !!msg\.firstParent/);
 });
 
-test('keeps Base and Head available as explicit range endpoints in Settings', () => {
+test('keeps From and To available as explicit range endpoints in Settings', () => {
   assert.match(htmlBuilder, /id="activeBaseRef"/);
   assert.match(htmlBuilder, /id="activeHeadRef"/);
   assert.match(htmlBuilder, /class="range-endpoint range-endpoint-base"/);
   assert.match(htmlBuilder, /class="range-endpoint range-endpoint-head"/);
-  assert.match(htmlBuilder, />BASE<\/span>/);
-  assert.match(htmlBuilder, />HEAD<\/span>/);
+  assert.match(htmlBuilder, /class="range-endpoint-badge">FROM<\/span>/);
+  assert.match(htmlBuilder, /class="range-endpoint-badge">TO<\/span>/);
   assert.match(script, /function effectiveRangeRefs\(\)/);
   assert.match(script, /headEndpoint\?\.classList\.toggle\('is-overridden'/);
   assert.match(declarationBlock('.diff-range-bar'), /grid-template-columns\s*:\s*minmax\(0, 1fr\) auto minmax\(0, 1fr\)/);

@@ -1,5 +1,7 @@
 import * as assert from 'assert';
 import * as vscode from 'vscode';
+import { buildGitShowUri, openCommitDiff } from '../commitDiffEditor';
+import { createCommitDiffFixture } from './commitDiffFixture';
 import {
     buildCommitUrl,
     formatDiffRange,
@@ -37,6 +39,49 @@ suite('OwlDiffSearch', () => {
             parseGlobPatterns('src/**, .py\n./packages/api/**'),
             ['src/**', '*.py', 'packages/api/**'],
         );
+    });
+
+    test('opens all commit files in one native diff tab with readable revision content', async function () {
+        this.timeout(20000);
+        const fixture = createCommitDiffFixture();
+        try {
+            await vscode.extensions.getExtension('owl-diff-search-local.owl-diff-search')!.activate();
+            await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+            await openCommitDiff(fixture.repo, fixture.hash, fixture.preferredFile);
+            const expectedTitle = `${fixture.hash.slice(0, 7)} · Update requests and related files (6 files)`;
+            for (let attempt = 0; attempt < 100; attempt++) {
+                if (vscode.window.tabGroups.activeTabGroup.activeTab?.label === expectedTitle) { break; }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            const tabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
+            assert.strictEqual(tabs.length, 1, 'The commit must open in a single tab');
+            assert.strictEqual(tabs[0].label, expectedTitle);
+            const original = await vscode.workspace.openTextDocument(buildGitShowUri(fixture.repo, fixture.parent, fixture.preferredFile));
+            const modified = await vscode.workspace.openTextDocument(buildGitShowUri(fixture.repo, fixture.hash, fixture.preferredFile));
+            assert.strictEqual(original.getText(), 'timeout = 1\n');
+            assert.strictEqual(modified.getText(), 'timeout = 10\n');
+            for (const [ref, file, expected] of [
+                [fixture.hash, 'README.md', 'new documentation\n'],
+                [fixture.hash, 'added.txt', 'added content\n'],
+                [fixture.parent, 'remove.txt', 'removed content\n'],
+                [fixture.parent, 'old name.txt', 'renamed content\n'],
+                [fixture.hash, 'new name.txt', 'renamed content\n'],
+            ]) {
+                const document = await vscode.workspace.openTextDocument(buildGitShowUri(fixture.repo, ref, file));
+                assert.strictEqual(document.getText(), expected);
+            }
+            await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+            await openCommitDiff(fixture.repo, fixture.parent);
+            const rootTitle = `${fixture.parent.slice(0, 7)} · Initial files (4 files)`;
+            for (let attempt = 0; attempt < 100; attempt++) {
+                if (vscode.window.tabGroups.activeTabGroup.activeTab?.label === rootTitle) { break; }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            assert.strictEqual(vscode.window.tabGroups.activeTabGroup.activeTab?.label, rootTitle);
+        } finally {
+            await vscode.commands.executeCommand('workbench.action.closeAllEditors');
+            fixture.dispose();
+        }
     });
 
     test('normalizes the public diff-search options', () => {

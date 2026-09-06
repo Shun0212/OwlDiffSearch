@@ -58,7 +58,7 @@
     if (emptyTitle) emptyTitle.textContent = branches ? 'Find the branch behind a change' : 'Ready to search the diff';
     if (emptyHint) emptyHint.textContent = branches
       ? 'Describe a change, then search to see matching branches and the commits behind them.'
-      : 'Blank refs compare HEAD with the working tree. Choose commits above for branch or commit review.';
+      : 'Blank refs compare the current commit (HEAD) with the working tree. Choose commits above for branch or commit review.';
     updateSettingsStateSummary();
   }
 
@@ -157,7 +157,7 @@
     if (activeBase) activeBase.textContent = base;
     if (activeHead) {
       activeHead.textContent = head;
-      activeHead.title = commitBranchFilter ? `Selected branch ${commitBranchFilter} is used as Head` : '';
+      activeHead.title = commitBranchFilter ? `Selected branch ${commitBranchFilter} is used as To` : '';
     }
     if (summary) summary.textContent = value;
     highlightCommitSelection();
@@ -397,13 +397,13 @@
     const headEndpoint = headInput?.closest('.range-endpoint');
     if (headInput) {
       headInput.disabled = Boolean(commitBranchFilter);
-      headInput.title = commitBranchFilter ? `Branch filter uses ${commitBranchFilter} as Head` : '';
+      headInput.title = commitBranchFilter ? `Branch filter uses ${commitBranchFilter} as To` : '';
     }
     headEndpoint?.classList.toggle('is-overridden', Boolean(commitBranchFilter));
     if (headHint) {
       headHint.textContent = commitBranchFilter
-        ? `Branch “${commitBranchFilter}” is being used as Head`
-        : 'Shift+click a commit below to set Head';
+        ? `Branch “${commitBranchFilter}” is being used as To`
+        : 'Shift+click a commit below to set To';
     }
     updateSettingsStateSummary();
     updateRange();
@@ -624,10 +624,10 @@
       row.dataset.hash = commit.hash;
       const refSummary = summarizeCommitRefs(commit.refs, commitBranchFilter);
       const headTitle = refSummary.isHead
-        ? (refSummary.currentBranch ? `Git HEAD · current branch: ${refSummary.currentBranch}` : 'Git HEAD · detached')
+        ? (refSummary.currentBranch ? `Current commit (Git HEAD) · branch: ${refSummary.currentBranch}` : 'Current commit (Git HEAD) · detached')
         : '';
       const refTitle = [headTitle, ...refSummary.labels].filter(Boolean).join('\n');
-      row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\n${refTitle ? `${refTitle}\n` : ''}Click: Base · Shift+Click: Head`;
+      row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\n${refTitle ? `${refTitle}\n` : ''}Click: From · Shift+Click: To`;
       row.setAttribute('aria-label', row.title);
       row.classList.toggle('is-git-head', refSummary.isHead);
       const label = refSummary.labels[0];
@@ -639,9 +639,9 @@
         : '';
       row.innerHTML =
         `<span class="commit-hash">${escapeHtml(commit.short)}</span>` +
-        (refSummary.isHead ? `<span class="commit-git-head" title="${escapeHtml(headTitle)}">HEAD</span>` : '') +
-        '<span class="commit-badge commit-badge-base" title="Compare range: Base">Base</span>' +
-        '<span class="commit-badge commit-badge-head" title="Compare range: Head">Head</span>' +
+        (refSummary.isHead ? `<span class="commit-git-head" title="${escapeHtml(headTitle)}">Current</span>` : '') +
+        '<span class="commit-badge commit-badge-base" title="Compare range: From (start)">From</span>' +
+        '<span class="commit-badge commit-badge-head" title="Compare range: To (end)">To</span>' +
         refs +
         `<span class="commit-subject">${escapeHtml(commit.subject)}</span>` +
         `<span class="commit-meta">${escapeHtml(commit.date)}</span>`;
@@ -911,6 +911,7 @@
       const card = document.createElement('article');
       const isBranch = result.symbol_kind === 'diff_branch';
       const isCommitDiff = result.symbol_kind === 'diff_commit';
+      const hasCommitDiff = isCommitDiff && Boolean(result.commit_hash);
       const isDiff = result.symbol_kind === 'diff_hunk' || isCommitDiff || isBranch;
       card.className = `result-item${isDiff ? ' diff-item' : ''}${isBranch ? ' branch-result' : ''}`;
       const file = result.file_path || result.file || '';
@@ -928,7 +929,18 @@
         (result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="Match score">${score}%</span>`) +
         '</div>';
 
-      card.addEventListener('click', () => openResultDiff(result, file, line));
+      const openPrimaryDiff = () => {
+        if (hasCommitDiff) {
+          vscode.postMessage({
+            command: 'openCommitDiff',
+            hash: result.commit_hash,
+            preferredFile: result.scored_file_path || file,
+          });
+        } else {
+          openResultDiff(result, file, line);
+        }
+      };
+      card.addEventListener('click', openPrimaryDiff);
 
       if (isBranch) {
         if (result.branch_aliases?.length) {
@@ -990,10 +1002,11 @@
       const openButton = document.createElement('button');
       openButton.type = 'button';
       openButton.className = 'diff-action-btn open-diff-action';
-      openButton.textContent = isBranch ? 'Open Best Diff' : 'Open Diff';
+      openButton.textContent = hasCommitDiff ? 'Open Commit Diff' : isBranch ? 'Open Best Diff' : 'Open Diff';
+      if (hasCommitDiff) openButton.title = 'Open all changed files in this commit';
       openButton.addEventListener('click', (event) => {
         event.stopPropagation();
-        openResultDiff(result, file, line);
+        openPrimaryDiff();
       });
       actions.appendChild(openButton);
       if (result.commit_hash) {

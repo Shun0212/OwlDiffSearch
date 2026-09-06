@@ -84,7 +84,7 @@ async function main() {
             ],
           };
           if (message.command === 'search' && !window.testHoldSearch) reply = {
-            type: 'results', results: fixture.results, meta: fixture, searchRequestId: message.searchRequestId,
+            type: 'results', results: window.testSearchResults || fixture.results, meta: fixture, searchRequestId: message.searchRequestId,
           };
           if (message.command === 'getGitCommits') reply = {
             type: 'gitCommits', commits: graphFixture, hasMore: false, requestId: message.requestId,
@@ -103,13 +103,15 @@ async function main() {
     assert.equal(await currentRow.locator('.commit-ref').count(), 1);
     assert.equal(await currentRow.locator('.commit-ref-label').innerText(), 'main');
     assert.equal(await currentRow.locator('.commit-ref-count').innerText(), '+22');
-    assert.equal(await currentRow.locator('.commit-git-head').innerText(), 'HEAD');
+    assert.equal(await currentRow.locator('.commit-git-head').innerText(), 'Current');
     const allRefs = await currentRow.locator('.commit-ref').getAttribute('title');
     for (const ref of graphFixture[0].refs) assert.ok(allRefs.includes(ref.replace('HEAD -> ', '')));
     await previousRow.click();
     await currentRow.click({ modifiers: ['Shift'] });
     assert.equal(await previousRow.locator('.commit-badge-base').isVisible(), true);
     assert.equal(await currentRow.locator('.commit-badge-head').isVisible(), true);
+    assert.equal(await previousRow.locator('.commit-badge-base').innerText(), 'From');
+    assert.equal(await currentRow.locator('.commit-badge-head').innerText(), 'To');
     assert.equal(await currentRow.locator('.commit-git-head').isVisible(), true);
     for (const width of [280, 360, 520]) {
       await page.setViewportSize({ width, height: 900 });
@@ -122,12 +124,12 @@ async function main() {
         });
         return { badges, overflow: graph.scrollWidth > graph.clientWidth, rowHeight: row.getBoundingClientRect().height };
       });
-      assert.deepEqual(layout.badges, [true, true, true], `HEAD and grouped refs must remain visible at ${width}px`);
+      assert.deepEqual(layout.badges, [true, true, true], `Current, To, and grouped refs must remain visible at ${width}px`);
       assert.equal(layout.overflow, false, `Commit refs must not cause horizontal scrolling at ${width}px`);
       assert.equal(layout.rowHeight, 34, 'Grouping must preserve graph alignment');
       await page.screenshot({ path: path.join(artifacts, `commit-refs-${width}.png`), fullPage: true });
     }
-    // Base and Head may refer to the same commit; both endpoints and Git HEAD stay visible.
+    // From and To may refer to the same commit; both endpoints and Current stay visible.
     await currentRow.click();
     assert.equal(await currentRow.locator('.commit-badge-base').isVisible(), true);
     await page.setViewportSize({ width: 280, height: 900 });
@@ -181,6 +183,43 @@ async function main() {
     assert.equal(await page.locator('#branchSearchOptions').isVisible(), false);
     assert.equal(await page.locator('.history-browser').isVisible(), true);
     assert.equal(await page.locator('.result-item').count(), 0, 'Changing the search unit must clear old results');
+
+    const commitResult = {
+      ...fixture.results[0], symbol_kind: 'diff_commit', commit_subject: 'Update authentication and related files',
+      scored_file_path: 'auth.py', commit_file_count: 2, commit_hunk_count: 2,
+      commit_hunks: [
+        { path: 'auth.py', file_path: '/repo/auth.py', diff_old_path: 'auth.py', diff_new_path: 'auth.py', is_representative: true },
+        { path: 'tests/test_auth.py', file_path: '/repo/tests/test_auth.py', diff_old_path: 'tests/test_auth.py', diff_new_path: 'tests/test_auth.py' },
+      ],
+    };
+    await page.evaluate((result) => { window.testSearchResults = [result]; }, commitResult);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    const blueButton = page.getByRole('button', { name: 'Open Commit Diff', exact: true });
+    await blueButton.click();
+    const commitRequest = await page.evaluate(() => window.testMessages.at(-1));
+    assert.equal(commitRequest.command, 'openCommitDiff');
+    assert.equal(commitRequest.hash, commitResult.commit_hash);
+    assert.equal(commitRequest.preferredFile, 'auth.py');
+    await page.locator('.diff-commit-files > summary').click();
+    await page.getByRole('button', { name: 'tests/test_auth.py', exact: true }).click();
+    const fileRequest = await page.evaluate(() => window.testMessages.at(-1));
+    assert.equal(fileRequest.command, 'openDiff', 'A file name must still open its individual diff');
+    assert.equal(fileRequest.newPath, 'tests/test_auth.py');
+    await page.getByRole('button', { name: 'Open Commit', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.testMessages.at(-1).command), 'openCommitRemote');
+    await page.locator('.result-item .function-name').click();
+    assert.equal(await page.evaluate(() => window.testMessages.at(-1).command), 'openCommitDiff');
+    await page.setViewportSize({ width: 280, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(artifacts, 'commit-diff-button-280.png'), fullPage: true });
+    await page.getByRole('button', { name: 'Hunks', exact: true }).click();
+    await page.evaluate((result) => {
+      window.testSearchResults = [{ ...result, symbol_kind: 'diff_hunk', commit_hunks: [] }];
+    }, commitResult);
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.getByRole('button', { name: 'Open Diff', exact: true }).click();
+    assert.equal(await page.evaluate(() => window.testMessages.at(-1).command), 'openDiff');
+    await page.evaluate(() => { delete window.testSearchResults; });
 
     await page.getByRole('button', { name: 'Branches', exact: true }).click();
     await page.evaluate(() => { window.testHoldSearch = true; });

@@ -17,6 +17,7 @@ import {
 	withDocumentationExcludes,
 } from './diffUtils';
 import { buildDiffSearchWebviewHtml } from './webviewHtml';
+import { buildGitShowUri, openCommitDiff, OWL_DIFF_SCHEME } from './commitDiffEditor';
 
 const DEFAULT_SERVER_HOST = '127.0.0.1';
 const DEFAULT_SERVER_PORT = 8765;
@@ -27,6 +28,7 @@ const ALLOWED_WEBVIEW_COMMANDS = new Set([
 	'getGitBranches',
 	'getGitCommits',
 	'openCommitRemote',
+	'openCommitDiff',
 	'openDiff',
 	'persistState',
 	'prepareDiffSearch',
@@ -917,8 +919,6 @@ function gitShowFileContent(repo: string, ref: string, relPath: string): Promise
 
 // Virtual documents backing the left/right sides of the native diff editor.
 // The URI carries the repo, ref, and repo-relative path in its query.
-const OWL_DIFF_SCHEME = 'owl-diff-search';
-
 class OwlGitShowContentProvider implements vscode.TextDocumentContentProvider {
 	async provideTextDocumentContent(uri: vscode.Uri): Promise<string> {
 		const params = new URLSearchParams(uri.query);
@@ -941,11 +941,6 @@ class OwlGitShowContentProvider implements vscode.TextDocumentContentProvider {
 		}
 		return gitShowFileContent(repo, ref, safePath);
 	}
-}
-
-function buildGitShowUri(repo: string, ref: string, relPath: string): vscode.Uri {
-	const query = new URLSearchParams({ ref, repo, path: relPath }).toString();
-	return vscode.Uri.parse(`${OWL_DIFF_SCHEME}:/${relPath}?${query}`);
 }
 
 function safeRepoRelativePath(repo: string, candidate: string, fallback: string): string {
@@ -1438,6 +1433,21 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 					}
 				} catch (error: any) {
 					replyToSearch({ type: 'error', message: error?.message || 'Failed to search. Make sure the server is running.' });
+				}
+			}
+			if (msg.command === 'openCommitDiff') {
+				try {
+					const repo = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
+					if (!repo) {
+						throw new Error('Open a Git repository folder to view commit changes.');
+					}
+					await openCommitDiff(
+						repo,
+						typeof msg.hash === 'string' ? msg.hash.trim() : '',
+						typeof msg.preferredFile === 'string' ? msg.preferredFile : '',
+					);
+				} catch (error: any) {
+					vscode.window.showErrorMessage('Could not open commit diff: ' + (error?.message || String(error)));
 				}
 			}
 			if (msg.command === 'openDiff') {
