@@ -42,8 +42,8 @@ def diff_embedding_cache_dir(
 ) -> str:
     if not embedding_signature or any(ch not in "0123456789abcdef" for ch in embedding_signature):
         raise ValueError("embedding_signature must be a lowercase hexadecimal digest")
-    if search_target not in {"diff_hunks", "diff_commits"}:
-        raise ValueError("search_target must be diff_hunks or diff_commits")
+    if search_target not in {"diff_hunks", "diff_commits", "diff_branches"}:
+        raise ValueError("search_target must be diff_hunks, diff_commits or diff_branches")
     return os.path.join(index_root, search_target, embedding_signature)
 
 

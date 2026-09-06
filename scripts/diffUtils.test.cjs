@@ -32,6 +32,7 @@ test('normalizes diff-only search options', () => {
   assert.equal(normalizeDiffSearchTarget('diff_hunks'), 'diff_hunks');
   assert.equal(normalizeDiffSearchTarget('unknown'), 'diff_hunks');
   assert.equal(normalizeDiffSearchTarget('diff_commits'), 'diff_commits');
+  assert.equal(normalizeDiffSearchTarget('diff_branches'), 'diff_branches');
 });
 
 test('parses compact include and exclude glob input', () => {

@@ -137,9 +137,10 @@ test('consolidates low-frequency controls behind one Settings item', () => {
   const branchPicker = htmlBuilder.indexOf('class="commit-branch-picker"');
   const historyOptions = htmlBuilder.indexOf('id="commitBranchLimitSelect"');
   const commitGraph = htmlBuilder.indexOf('id="commitGraph"');
-  [settingsState, detectedLanguages, searchMode, searchUnit, activeRange, branchPicker, historyOptions].forEach((position) => {
+  [settingsState, detectedLanguages, searchMode, activeRange, branchPicker, historyOptions].forEach((position) => {
     assert.ok(position > settingsStart && position < settingsEnd, 'secondary controls should stay inside Settings');
   });
+  assert.ok(searchUnit < settingsStart, 'search unit should be visible above Settings');
   assert.ok(commitGraph > settingsEnd, 'commit graph should remain visible outside Settings');
 });
 

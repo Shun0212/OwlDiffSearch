@@ -1148,14 +1148,15 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 }
                         }
                         if (msg.command === 'prepareDiffSearch') {
+                                const replyToPrepare = (payload: Record<string, unknown>) => webviewView.webview.postMessage({ ...payload, prepareRequestId: msg.prepareRequestId });
                                 const workspaceFolders = vscode.workspace.workspaceFolders;
                                 if (!workspaceFolders || workspaceFolders.length === 0) {
-                                        webviewView.webview.postMessage({ type: 'diffPrepareError', message: 'No workspace folder found.' });
+                                        replyToPrepare({ type: 'diffPrepareError', message: 'No workspace folder found.' });
                                         return;
                                 }
                                 const serverPort = await resolveActiveServerPort();
                                 if (serverPort === undefined) {
-                                        webviewView.webview.postMessage({ type: 'diffPrepareError', message: 'Owl Diff Search server is not running.' });
+                                        replyToPrepare({ type: 'diffPrepareError', message: 'Owl Diff Search server is not running.' });
                                         return;
                                 }
                                 const workspaceFolder = workspaceFolders[0];
@@ -1171,12 +1172,14 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 let diffBaseRef = '';
                                 let diffHeadRef = '';
 				let branchRef = '';
+                                let branchBaseRef = '';
                                 try {
                                         diffBaseRef = validateGitRef(msg.diffBaseRef);
                                         diffHeadRef = validateGitRef(msg.diffHeadRef);
 					branchRef = validateGitRef(msg.branchRef);
+                                        branchBaseRef = validateGitRef(msg.branchBaseRef);
                                 } catch (error: any) {
-                                        webviewView.webview.postMessage({ type: 'diffPrepareError', message: error?.message || String(error) });
+                                        replyToPrepare({ type: 'diffPrepareError', message: error?.message || String(error) });
                                         return;
                                 }
                                 try {
@@ -1194,6 +1197,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                                         diff_base_ref: diffBaseRef,
                                                         diff_head_ref: diffHeadRef,
 								branch_ref: branchRef,
+                                                        branch_base_ref: branchBaseRef,
 								first_parent: !!msg.firstParent,
                                                         force: !!msg.force
                                                 })
@@ -1202,9 +1206,9 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                                 throw new Error(`HTTP ${res.status}`);
                                         }
                                         const data: any = await res.json();
-                                        webviewView.webview.postMessage({ type: 'diffPrepared', data });
+                                        replyToPrepare({ type: 'diffPrepared', data });
                                 } catch (error: any) {
-                                        webviewView.webview.postMessage({
+                                        replyToPrepare({
                                                 type: 'diffPrepareError',
                                                 message: `Failed to prepare diff search: ${error?.message || String(error)}`
                                         });
@@ -1314,6 +1318,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 return;
                         }
                         if (msg.command === 'search') {
+				const replyToSearch = (payload: Record<string, unknown>) => webviewView.webview.postMessage({ ...payload, searchRequestId: msg.searchRequestId });
 				// サーバー起動チェック
 				const serverUp = await resolveActiveServerPort() !== undefined;
 				if (!serverUp) {
@@ -1323,22 +1328,24 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						'Start Server'
 					);
 					if (choice !== 'Start Server') {
+						replyToSearch({ type: 'error', message: 'Search cancelled: server was not started.' });
 						return;
 					}
 					const started = await this.setupAndStartServer(webviewView);
 					if (!started) {
+						replyToSearch({ type: 'error', message: 'Search server could not be started.' });
 						return;
 					}
 				}
                                 let query = typeof msg.text === 'string' ? msg.text.trim() : '';
 				if (!query) {
-					webviewView.webview.postMessage({ type: 'error', message: 'Enter a search query.' });
+					replyToSearch({ type: 'error', message: 'Enter a search query.' });
 					return;
 				}
                                 const fileExt = msg.lang || 'auto';
 				const workspaceFolders = vscode.workspace.workspaceFolders;
 				if (!workspaceFolders || workspaceFolders.length === 0) {
-					webviewView.webview.postMessage({ type: 'error', message: 'No workspace folder found' });
+					replyToSearch({ type: 'error', message: 'No workspace folder found' });
 					return;
 				}
 				const workspaceFolder = workspaceFolders[0];
@@ -1358,7 +1365,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 					diffHeadRef = validateGitRef(msg.diffHeadRef);
 					branchRef = validateGitRef(msg.branchRef);
 				} catch (error: any) {
-					webviewView.webview.postMessage({ type: 'error', message: error?.message || String(error) });
+					replyToSearch({ type: 'error', message: error?.message || String(error) });
 					return;
 				}
 				const translationOptions: TranslationRuntimeOptions = {
@@ -1370,11 +1377,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 					query = await translateJapaneseToEnglish(query, translationOptions);
 				}
 				// Always send both original and translated query to Webview for debugging
-				webviewView.webview.postMessage({ type: 'translatedQuery', original: originalQuery, translated: query });
-				webviewView.webview.postMessage({ type: 'status', message: 'Searching...' });
+				replyToSearch({ type: 'translatedQuery', original: originalQuery, translated: query });
+				replyToSearch({ type: 'status', message: 'Searching...' });
 				const serverPort = await resolveActiveServerPort();
 				if (serverPort === undefined) {
-					webviewView.webview.postMessage({ type: 'error', message: 'Failed to search. Make sure the server is running.' });
+					replyToSearch({ type: 'error', message: 'Failed to search. Make sure the server is running.' });
 					return;
 				}
 				try {
@@ -1395,7 +1402,8 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 							diff_base_ref: diffBaseRef,
 							diff_head_ref: diffHeadRef,
 							branch_ref: branchRef,
-							first_parent: !!msg.firstParent
+							first_parent: !!msg.firstParent,
+							branch_base_ref: validateGitRef(msg.branchBaseRef)
 						})
 					});
 					const data: any = await res.json();
@@ -1403,26 +1411,32 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						throw new Error(data?.detail || `Search failed with HTTP ${res.status}`);
 					}
 					if (data?.cancelled) {
-						webviewView.webview.postMessage({ type: 'status', message: data.message || 'Indexing / embedding cancelled.' });
-						webviewView.webview.postMessage({ type: 'results', results: [], folderPath, meta: {} });
+						replyToSearch({ type: 'status', message: data.message || 'Indexing / embedding cancelled.' });
+						replyToSearch({ type: 'results', results: [], folderPath, meta: {} });
 						return;
 					}
 					const meta = {
 						diff_embedding_cache_hit: Boolean(data?.diff_embedding_cache_hit),
 						diff_embedding_cache_source: data?.diff_embedding_cache_source,
+						num_reused_embeddings: data?.num_reused_embeddings,
+						num_new_embeddings: data?.num_new_embeddings,
 						num_diff_hunks: data?.num_diff_hunks,
 						num_diff_units: data?.num_diff_units,
 						num_diff_commits: data?.num_diff_commits,
+						num_diff_branches: data?.num_diff_branches,
+						num_branches_scanned: data?.num_branches_scanned,
+						branch_base_ref: data?.branch_base_ref,
+						message: data?.message,
 						search_target: data?.search_target,
 						num_files: data?.num_files
 					};
 					if (data && data.results && Array.isArray(data.results) && data.results.length > 0) {
-						webviewView.webview.postMessage({ type: 'results', results: data.results, folderPath, meta });
+						replyToSearch({ type: 'results', results: data.results, folderPath, meta });
 					} else {
-						webviewView.webview.postMessage({ type: 'results', results: [], folderPath, meta });
+						replyToSearch({ type: 'results', results: [], folderPath, meta });
 					}
 				} catch (error: any) {
-					webviewView.webview.postMessage({ type: 'error', message: error?.message || 'Failed to search. Make sure the server is running.' });
+					replyToSearch({ type: 'error', message: error?.message || 'Failed to search. Make sure the server is running.' });
 				}
 			}
 			if (msg.command === 'openDiff') {

@@ -1,5 +1,5 @@
 export type DiffSearchMode = 'semantic' | 'hybrid' | 'bm25' | 'keyword';
-export type DiffSearchTarget = 'diff_hunks' | 'diff_commits';
+export type DiffSearchTarget = 'diff_hunks' | 'diff_commits' | 'diff_branches';
 
 export const DOCUMENTATION_EXCLUDE_GLOBS = [
 	'**/*.md',
@@ -54,7 +54,7 @@ export function normalizeSearchMode(value: unknown): DiffSearchMode {
 }
 
 export function normalizeDiffSearchTarget(value: unknown): DiffSearchTarget {
-	return value === 'diff_commits' ? 'diff_commits' : 'diff_hunks';
+	return value === 'diff_commits' || value === 'diff_branches' ? value : 'diff_hunks';
 }
 
 export function parseGlobPatterns(value: unknown): string[] {

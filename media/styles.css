@@ -34,6 +34,12 @@ button:active {
   transform: scale(0.98);
 }
 
+button:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+}
+
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
@@ -153,6 +159,91 @@ summary:focus-visible {
 .searchbar input {
   min-width: 0;
   flex: 1;
+}
+
+.search-unit-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.7em;
+  margin-bottom: 0.75em;
+}
+
+.search-unit-toolbar .segmented-control {
+  flex: 1;
+}
+
+.search-unit-toolbar .segment-btn {
+  padding: 0.6em 0.45em;
+  font-size: 0.88em;
+}
+
+.search-unit-label,
+.branch-search-options > label {
+  font-size: 0.82em;
+  font-weight: 600;
+}
+
+.branch-search-options {
+  display: grid;
+  gap: 0.5em;
+  padding: 0.8em;
+  margin-bottom: 0.8em;
+  border: 1px solid var(--vscode-input-border, #5a5a5a);
+  border-radius: 7px;
+  background: var(--vscode-editor-background, #1e1e1e);
+}
+
+.branch-search-options select {
+  width: 100%;
+  min-width: 0;
+}
+
+.branch-search-summary {
+  font-size: 0.78em;
+  color: var(--vscode-textLink-foreground, #4f9cff);
+}
+
+.branch-search-summary:empty,
+.branch-search .history-browser,
+.branch-search .range-settings-body,
+.branch-search .history-settings-body {
+  display: none;
+}
+
+.branch-result .function-name {
+  color: var(--vscode-textLink-foreground, #4f9cff);
+  overflow-wrap: anywhere;
+}
+
+.branch-evidence {
+  display: grid;
+  gap: 0.3em;
+  margin: 0.65em 0;
+}
+
+.branch-evidence-label {
+  font-size: 0.72em;
+  color: var(--vscode-descriptionForeground, #8b949e);
+}
+
+.branch-evidence-item {
+  display: grid;
+  gap: 0.15em;
+  padding: 0.5em 0.65em;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: var(--vscode-button-secondaryBackground, #313131);
+  color: var(--vscode-button-secondaryForeground, #cccccc);
+}
+
+.branch-evidence-item:hover {
+  background: var(--vscode-button-secondaryHoverBackground, #454545);
+}
+
+.branch-evidence-item small {
+  color: var(--vscode-descriptionForeground, #8b949e);
+  font-weight: 400;
 }
 
 input[type="text"],

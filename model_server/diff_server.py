@@ -63,18 +63,24 @@ async def cancel_current_embedding():
 
 @app.post("/prepare_diff_search")
 async def prepare_diff_search(req: PrepareDiffSearchRequest):
-    if normalize_search_target(req.search_target) not in {"diff_hunks", "diff_commits"}:
-        raise HTTPException(status_code=400, detail="Search unit must be diff_hunks or diff_commits.")
-    return await prepare_diff_search_api(req)
+    if normalize_search_target(req.search_target) not in {"diff_hunks", "diff_commits", "diff_branches"}:
+        raise HTTPException(status_code=400, detail="Search unit must be diff_hunks, diff_commits or diff_branches.")
+    try:
+        return await prepare_diff_search_api(req)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 
 @app.post("/search_diff")
 async def search_diff(req: SearchFunctionsSimpleRequest):
     target = normalize_search_target(req.search_target)
-    if target not in {"diff_hunks", "diff_commits"}:
+    if target not in {"diff_hunks", "diff_commits", "diff_branches"}:
         raise HTTPException(
             status_code=400,
-            detail="Search unit must be diff_hunks or diff_commits.",
+            detail="Search unit must be diff_hunks, diff_commits or diff_branches.",
         )
     req.search_target = target
-    return await search_functions_simple_api(req)
+    try:
+        return await search_functions_simple_api(req)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error

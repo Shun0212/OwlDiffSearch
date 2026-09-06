@@ -62,6 +62,27 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
   </div>
 
   <main>
+    <div class="search-unit-toolbar">
+      <span class="search-unit-label">Find</span>
+      <div class="segmented-control" data-select="searchTargetSelect" role="group" aria-label="Search unit">
+        <button type="button" class="segment-btn active" data-value="diff_hunks">Hunks</button>
+        <button type="button" class="segment-btn" data-value="diff_commits">Commits</button>
+        <button type="button" class="segment-btn" data-value="diff_branches">Branches</button>
+      </div>
+      <select id="searchTargetSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
+        <option value="diff_hunks" selected>Unified diff hunks</option>
+        <option value="diff_commits">Commits scored by best file diff</option>
+        <option value="diff_branches">Branches ranked by matching changes</option>
+      </select>
+    </div>
+    <section id="branchSearchOptions" class="branch-search-options" aria-label="Branch search scope" hidden>
+      <label for="branchBaseRefSelect">Changes not in</label>
+      <select id="branchBaseRefSelect" aria-describedby="branchSearchHint">
+        <option value="">Auto (main / default branch)</option>
+      </select>
+      <div class="filter-note" id="branchSearchHint">Find branches by their changes outside this base. Searches all local and fetched remote branches, including merged-in commits.</div>
+      <div class="branch-search-summary" id="branchSearchSummary" aria-live="polite"></div>
+    </section>
     <div class="searchbar diff-searchbar">
       <input id="searchInput" type="text" autocomplete="off" placeholder="Describe the change to find" aria-label="Diff search query">
       <button id="searchBtn">Search</button>
@@ -97,17 +118,6 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                 <option value="hybrid">Hybrid</option>
                 <option value="bm25">BM25</option>
                 <option value="keyword">Keyword</option>
-              </select>
-            </div>
-            <div class="option-row stacked-row">
-              <span>Search unit</span>
-              <div class="segmented-control" data-select="searchTargetSelect" role="group" aria-label="Search unit">
-                <button type="button" class="segment-btn active" data-value="diff_hunks">Hunks</button>
-                <button type="button" class="segment-btn" data-value="diff_commits">Commits</button>
-              </div>
-              <select id="searchTargetSelect" class="hidden-select" aria-hidden="true" tabindex="-1">
-                <option value="diff_hunks" selected>Unified diff hunks</option>
-                <option value="diff_commits">Commits scored by best file diff</option>
               </select>
             </div>
           </section>

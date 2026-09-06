@@ -23,12 +23,15 @@ from pathspec.patterns import GitWildMatchPattern
 from pydantic import BaseModel
 
 import progress
+from branch_search import collect_branch_units, group_branch_results
 from diff_cache import (
     diff_cache_metadata,
     diff_cache_metadata_matches,
     diff_content_signature,
     diff_embedding_cache_dir,
+    diff_unit_hashes,
 )
+from unit_embedding_cache import UnitEmbeddingCache
 from model import DEFAULT_MODEL, encode_code
 # Keep FAISS after model: Sentence Transformers/PyTorch must initialize their
 # OpenMP runtime first on macOS. This is the same stable order used by
@@ -68,6 +71,7 @@ class SearchFunctionsSimpleRequest(BaseModel):
     diff_base_ref: Optional[str] = None
     diff_head_ref: Optional[str] = None
     branch_ref: Optional[str] = None
+    branch_base_ref: Optional[str] = None
     first_parent: bool = False
     force_diff_refresh: bool = False
 
@@ -84,6 +88,7 @@ class PrepareDiffSearchRequest(BaseModel):
     diff_base_ref: Optional[str] = None
     diff_head_ref: Optional[str] = None
     branch_ref: Optional[str] = None
+    branch_base_ref: Optional[str] = None
     first_parent: bool = False
     force: bool = False
 
@@ -185,6 +190,7 @@ class DiffSearchState:
         self.last_prepared: float = 0.0
         self.index_embedding_ms: float = 0.0
         self.hunk_build_ms: float = 0.0
+        self.unit_cache_seed_signature: str = ""
 
     def clear_embeddings(self):
         self.embedding_signature = ""
@@ -294,6 +300,8 @@ def is_ignored(path: str, spec: Optional[PathSpec], root_dir: str) -> bool:
 
 def normalize_search_target(value: Optional[str]) -> str:
     target = (value or "diff_hunks").strip().lower()
+    if target in {"diff_branches", "branches", "branch"}:
+        return "diff_branches"
     if target in {"diff_commit", "diff_commits", "commit", "commits", "commit_diff"}:
         return "diff_commits"
     return "diff_hunks"
@@ -965,42 +973,46 @@ def prepare_diff_search_index(
     force: bool = False,
     branch_ref: Optional[str] = None,
     first_parent: bool = False,
+    branch_base_ref: Optional[str] = None,
 ) -> dict:
     normalized_target = normalize_search_target(search_target)
-    config_signature, base_ref, head_ref = diff_signature(
-        directory,
-        file_ext,
-        include_files,
-        include_globs,
-        exclude_globs,
-        diff_base_ref,
-        diff_head_ref,
-        branch_ref,
-        first_parent,
-    )
     # Reading/parsing the patch is cheap compared with embedding it and is
     # necessary for working-tree searches: refs alone do not change when an
     # edited file changes. The content signature prevents stale cache hits.
     start = time.perf_counter()
-    hunks, file_count, base_ref, head_ref = collect_diff_hunks(
-        directory,
-        file_ext,
-        include_files,
-        include_globs,
-        exclude_globs,
-        diff_base_ref,
-        diff_head_ref,
-        branch_ref,
-        first_parent,
-    )
-    units = (
-        build_commit_diff_units(hunks)
-        if normalized_target == "diff_commits"
-        else [dict(hunk) for hunk in hunks]
-    )
+    branch_metadata = {}
+    if normalized_target == "diff_branches":
+        hunks, units, branch_metadata = collect_branch_units(
+            directory, branch_base_ref,
+            lambda base, head: collect_diff_hunks(
+                directory, file_ext, include_files, include_globs, exclude_globs,
+                base, head,
+            )[0],
+            build_commit_diff_units,
+        )
+        base_ref, head_ref = branch_metadata["branch_base_ref"], ""
+        config_signature, _, _ = diff_signature(
+            directory, file_ext, include_files, include_globs, exclude_globs,
+            branch_metadata["branch_base_hash"], "",
+        )
+        file_count = len({hunk["path"] for hunk in hunks})
+    else:
+        config_signature, base_ref, head_ref = diff_signature(
+            directory, file_ext, include_files, include_globs, exclude_globs,
+            diff_base_ref, diff_head_ref, branch_ref, first_parent,
+        )
+        hunks, file_count, base_ref, head_ref = collect_diff_hunks(
+            directory, file_ext, include_files, include_globs, exclude_globs,
+            diff_base_ref, diff_head_ref, branch_ref, first_parent,
+        )
+        units = (
+            build_commit_diff_units(hunks)
+            if normalized_target == "diff_commits"
+            else [dict(hunk) for hunk in hunks]
+        )
     commit_count = (
         len({commit_result_key(unit) for unit in units})
-        if normalized_target == "diff_commits"
+        if normalized_target in {"diff_commits", "diff_branches"}
         else 0
     )
     signature = diff_content_signature(config_signature, units, normalized_target)
@@ -1034,8 +1046,15 @@ def prepare_diff_search_index(
     embedding_cache_hit = not needs_embeddings
     embedding_cache_source = "not-needed"
     index_embedding_ms = 0.0
+    reused_embedding_count = 0
+    new_embedding_count = 0
     if needs_embeddings:
         emb_signature = diff_embedding_signature(signature)
+        unit_hashes = diff_unit_hashes(diff_search_state.units)
+        unit_cache = UnitEmbeddingCache(
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), OWL_INDEX_DIR),
+            current_model_config(),
+        )
         embedding_cache_hit = (
             diff_search_state.embedding_signature == emb_signature
             and diff_search_state.embeddings is not None
@@ -1050,8 +1069,37 @@ def prepare_diff_search_index(
             texts = [str(unit.get("search_text") or "") for unit in diff_search_state.units]
             if texts:
                 progress.raise_if_cancelled()
+                unique_texts = dict(zip(unit_hashes, texts))
+                cached_vectors = unit_cache.load(unit_hashes)
+                if len({vector.size for vector in cached_vectors.values()}) > 1:
+                    cached_vectors = {}
+                missing = [key for key in unique_texts if key not in cached_vectors]
                 start = time.perf_counter()
-                embeddings = encode_code(texts, BATCH_SIZE, show_progress=True, input_type="document")
+                if missing:
+                    new_vectors = encode_code(
+                        [unique_texts[key] for key in missing], BATCH_SIZE,
+                        show_progress=True, input_type="document",
+                    )
+                    # Discard incompatible cached rows, e.g. after a partial cache corruption.
+                    if cached_vectors and next(iter(cached_vectors.values())).size != new_vectors.shape[1]:
+                        incompatible = list(cached_vectors)
+                        cached_vectors = {}
+                        replacement = encode_code(
+                            [unique_texts[key] for key in incompatible], BATCH_SIZE,
+                            show_progress=True, input_type="document",
+                        )
+                        missing.extend(incompatible)
+                        new_vectors = np.vstack([new_vectors, replacement])
+                    computed = dict(zip(missing, new_vectors))
+                    cache_written = unit_cache.store(computed)
+                else:
+                    computed = {}
+                    cache_written = True
+                progress.raise_if_cancelled()
+                reused_embedding_count = len(cached_vectors)
+                new_embedding_count = len(computed)
+                vectors = {**cached_vectors, **computed}
+                embeddings = np.asarray([vectors[key] for key in unit_hashes], dtype=np.float32)
                 index_embedding_ms = (time.perf_counter() - start) * 1000
                 faiss_index = faiss.IndexFlatL2(embeddings.shape[1])
                 faiss_index.add(embeddings)
@@ -1060,11 +1108,23 @@ def prepare_diff_search_index(
                 diff_search_state.embedding_signature = emb_signature
                 diff_search_state.index_embedding_ms = index_embedding_ms
                 diff_search_state.save_embeddings(emb_signature)
-                embedding_cache_source = "fresh"
+                diff_search_state.unit_cache_seed_signature = emb_signature if cache_written else ""
+                embedding_cache_hit = not new_embedding_count
+                embedding_cache_source = (
+                    "units" if not new_embedding_count
+                    else "incremental" if reused_embedding_count else "fresh"
+                )
             else:
                 diff_search_state.clear_embeddings()
                 diff_search_state.embedding_signature = emb_signature
                 embedding_cache_source = "empty"
+        else:
+            reused_embedding_count = len(set(unit_hashes))
+            # Seed the per-text cache from an existing complete index, including
+            # indexes written before incremental caching was introduced.
+            if diff_search_state.unit_cache_seed_signature != emb_signature:
+                if unit_cache.store(dict(zip(unit_hashes, diff_search_state.embeddings))):
+                    diff_search_state.unit_cache_seed_signature = emb_signature
         index_embedding_ms = 0.0 if embedding_cache_hit else diff_search_state.index_embedding_ms
 
     return {
@@ -1075,16 +1135,19 @@ def prepare_diff_search_index(
         "diff_cache_hit": hunk_cache_hit,
         "diff_embedding_cache_hit": embedding_cache_hit,
         "diff_embedding_cache_source": embedding_cache_source,
-        "diff_compare": display_diff_compare(base_ref, head_ref),
+        "num_reused_embeddings": reused_embedding_count,
+        "num_new_embeddings": new_embedding_count,
+        "diff_compare": f"Changes not in {base_ref}" if normalized_target == "diff_branches" else display_diff_compare(base_ref, head_ref),
         "diff_base_ref": base_ref,
         "diff_head_ref": head_ref,
-        "branch_ref": sanitize_git_ref(branch_ref),
-        "first_parent": bool(first_parent),
+        "branch_ref": "" if normalized_target == "diff_branches" else sanitize_git_ref(branch_ref),
+        "first_parent": False if normalized_target == "diff_branches" else bool(first_parent),
         "diff_prepared_at": diff_search_state.last_prepared,
         "diff_hunk_build_ms": round(diff_search_state.hunk_build_ms, 1),
         "index_embedding_ms": round(index_embedding_ms, 1),
         "search_mode": normalized_mode,
         "search_target": normalized_target,
+        **branch_metadata,
     }
 
 
@@ -1106,6 +1169,7 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         req.force_diff_refresh,
         req.branch_ref,
         req.first_parent,
+        req.branch_base_ref,
     )
     units = diff_search_state.units
     needs_embeddings = search_mode in {"semantic", "hybrid"}
@@ -1113,7 +1177,9 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         return {
             "results": [],
             "message": (
-                "No commit diffs found."
+                "No branches have searchable changes outside the comparison base."
+                if search_target == "diff_branches"
+                else "No commit diffs found."
                 if search_target == "diff_commits"
                 else "No changed hunks found."
             ),
@@ -1161,7 +1227,8 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
                 seen_commits.add(key)
                 unique_commit_indices.append(unit_index)
             matched_indices = unique_commit_indices
-        for rank, unit_index in enumerate(matched_indices[:req.top_k], start=1):
+        result_indices = matched_indices if search_target == "diff_branches" else matched_indices[:req.top_k]
+        for rank, unit_index in enumerate(result_indices, start=1):
             found.append(build_hunk_result(rank, unit_index, None, 0.0, 0.0, extra={
                 "distance": None,
                 "hybrid_score": None,
@@ -1169,6 +1236,8 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
                 "keyword_match": True,
                 "matched_keywords": matches[unit_index],
             }))
+        if search_target == "diff_branches":
+            found = group_branch_results(found, req.top_k)
         return {
             "results": found,
             "num_functions": len(units),
@@ -1215,7 +1284,7 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         candidate_indices.update(semantic_scores)
     if search_mode in {"bm25", "hybrid"}:
         candidate_indices.update(normalized_bm25)
-    if not candidate_indices:
+    if not candidate_indices and search_target != "diff_branches":
         candidate_indices.update(range(len(units)))
 
     ranked = []
@@ -1234,7 +1303,8 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         ranked = collapse_commit_file_ranking(ranked, units)
 
     found = []
-    for rank, (score, semantic_score, bm25_score, unit_index) in enumerate(ranked[:req.top_k], start=1):
+    result_ranking = ranked if search_target == "diff_branches" else ranked[:req.top_k]
+    for rank, (score, semantic_score, bm25_score, unit_index) in enumerate(result_ranking, start=1):
         found.append(build_hunk_result(
             rank,
             unit_index,
@@ -1243,6 +1313,8 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
             bm25_score,
             extra={"distance": semantic_distances.get(unit_index)},
         ))
+    if search_target == "diff_branches":
+        found = group_branch_results(found, req.top_k)
     return {
         "results": found,
         "num_functions": len(units),
@@ -1269,45 +1341,51 @@ async def index_progress():
 async def prepare_diff_search_api(req: PrepareDiffSearchRequest):
     search_target = normalize_search_target(req.search_target)
     search_mode = req.search_mode if req.search_mode in {"semantic", "bm25", "hybrid", "keyword"} else "hybrid"
-    with diff_search_lock:
-        progress.clear_cancel()
-        try:
-            prepared = await asyncio.to_thread(
-                prepare_diff_search_index,
-                req.directory,
-                req.file_ext,
-                req.include_files,
-                req.include_globs,
-                req.exclude_globs,
-                search_target,
-                search_mode,
-                req.diff_base_ref,
-                req.diff_head_ref,
-                req.force,
-                req.branch_ref,
-                req.first_parent,
-            )
-        except progress.OperationCancelled:
-            return {"cancelled": True, "message": "Diff preparation cancelled.", "results": []}
-        finally:
-            progress.finish()
+    prepared = await asyncio.to_thread(
+        run_diff_operation, prepare_diff_search_index,
+        req.directory,
+        req.file_ext,
+        req.include_files,
+        req.include_globs,
+        req.exclude_globs,
+        search_target,
+        search_mode,
+        req.diff_base_ref,
+        req.diff_head_ref,
+        req.force,
+        req.branch_ref,
+        req.first_parent,
+        req.branch_base_ref,
+    )
+    if prepared.get("cancelled"):
+        return prepared
     return {
         **prepared,
         "search_target": search_target,
         "message": (
             f"Prepared {prepared.get('num_diff_units', 0)} "
-            f"{'commit diff(s)' if search_target == 'diff_commits' else 'changed hunk(s)'} "
+            f"{'branch file diff(s)' if search_target == 'diff_branches' else 'commit diff(s)' if search_target == 'diff_commits' else 'changed hunk(s)'} "
             f"from {prepared.get('num_files', 0)} file(s)."
         ),
     }
 
 
-async def search_functions_simple_api(req: SearchFunctionsSimpleRequest):
+def run_diff_operation(operation, *args):
+    """Keep the lock on the worker thread, including after a disconnected awaiter.
+
+    Waiting for another search must not block progress/cancel HTTP requests on
+    the event loop. The worker owns the lock until it actually stops modifying
+    the shared index, even if its asyncio task has already been cancelled.
+    """
     with diff_search_lock:
         progress.clear_cancel()
         try:
-            return await asyncio.to_thread(search_diff_hunks, req)
+            return operation(*args)
         except progress.OperationCancelled:
             return {"results": [], "cancelled": True, "message": "Diff search cancelled."}
         finally:
             progress.finish()
+
+
+async def search_functions_simple_api(req: SearchFunctionsSimpleRequest):
+    return await asyncio.to_thread(run_diff_operation, search_diff_hunks, req)

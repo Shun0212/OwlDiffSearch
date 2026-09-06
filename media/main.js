@@ -15,8 +15,78 @@
   let translationRequestId = 0;
   let progressWasActive = false;
   let searchInFlight = false;
+  let branchBaseRef = '';
+  let searchSequence = 0;
+  let activeSearchRequestId = null;
+  let activePrepareRequestId = null;
 
   const byId = (id) => document.getElementById(id);
+
+  function updateSearchAvailability() {
+    const busy = searchInFlight || activePrepareRequestId !== null;
+    if (byId('searchBtn')) byId('searchBtn').disabled = busy;
+    if (byId('refreshDiffSearchBtn')) byId('refreshDiffSearchBtn').disabled = busy;
+  }
+
+  function invalidateSearch() {
+    activeSearchRequestId = null;
+    activePrepareRequestId = null;
+    searchInFlight = false;
+    progressWasActive = false;
+    currentResults = [];
+    const results = byId('results');
+    if (results) results.innerHTML = '<div class="empty-state" id="emptyState"><div class="empty-title">Search conditions changed</div><div class="empty-hint">Search again to see results for these conditions.</div></div>';
+    if (byId('translatedQuery')) byId('translatedQuery').hidden = true;
+    if (byId('branchSearchSummary')) byId('branchSearchSummary').textContent = '';
+    if (byId('diffStatus')) byId('diffStatus').textContent = '';
+    setStatus('', false);
+    updateSearchAvailability();
+  }
+
+  function isBranchSearch() {
+    return byId('searchTargetSelect')?.value === 'diff_branches';
+  }
+
+  function updateSearchTargetUI() {
+    const branches = isBranchSearch();
+    document.body.classList.toggle('branch-search', branches);
+    if (byId('branchSearchOptions')) byId('branchSearchOptions').hidden = !branches;
+    const input = byId('searchInput');
+    if (input) input.placeholder = branches ? 'Describe a change to find its branch' : 'Describe the change to find';
+    const emptyTitle = byId('emptyState')?.querySelector('.empty-title');
+    const emptyHint = byId('emptyState')?.querySelector('.empty-hint');
+    if (emptyTitle) emptyTitle.textContent = branches ? 'Find the branch behind a change' : 'Ready to search the diff';
+    if (emptyHint) emptyHint.textContent = branches
+      ? 'Describe a change, then search to see matching branches and the commits behind them.'
+      : 'Blank refs compare HEAD with the working tree. Choose commits above for branch or commit review.';
+    updateSettingsStateSummary();
+  }
+
+  function renderBranchBaseOptions() {
+    const select = byId('branchBaseRefSelect');
+    if (!select) return;
+    select.innerHTML = '<option value="">Auto (main / default branch)</option>';
+    gitBranches.forEach((branch) => {
+      const option = document.createElement('option');
+      option.value = branch.ref;
+      option.textContent = branch.name;
+      select.appendChild(option);
+    });
+    if (branchBaseRef && !gitBranches.some((branch) => branch.ref === branchBaseRef)) {
+      const option = document.createElement('option');
+      option.value = branchBaseRef;
+      option.textContent = `${branchBaseRef} (unavailable)`;
+      select.appendChild(option);
+    }
+    select.value = branchBaseRef;
+  }
+
+  function updateBranchSearchSummary(meta) {
+    const summary = byId('branchSearchSummary');
+    if (summary && meta?.search_target === 'diff_branches') {
+      summary.textContent = `${meta.num_diff_branches || 0} branches with changes not in ${meta.branch_base_ref || 'base'} · ${meta.num_branches_scanned || 0} checked`;
+    }
+  }
 
   function escapeHtml(value) {
     return String(value ?? '')
@@ -57,7 +127,7 @@
   function updateSettingsStateSummary() {
     const summary = byId('settingsStateSummary');
     if (!summary) return;
-    const branch = commitBranchFilter || 'All branches';
+    const branch = isBranchSearch() ? 'Find branches' : (commitBranchFilter || 'All branches');
     const noDocs = byId('excludeDocumentationToggle')?.checked ? 'on' : 'off';
     const translation = translationSettings().enable ? 'on' : 'off';
     const branchName = byId('settingsBranchName');
@@ -107,6 +177,7 @@
       commitBranchFilter,
       commitBranchLimit,
       commitTraversal,
+      branchBaseRef,
     };
   }
 
@@ -136,11 +207,14 @@
       if (toggle) toggle.checked = state.excludeDocumentation;
     }
     if (typeof state.commitBranchFilter === 'string') commitBranchFilter = state.commitBranchFilter;
+    if (typeof state.branchBaseRef === 'string') branchBaseRef = state.branchBaseRef;
+    renderBranchBaseOptions();
     if ([0, 1, 3, 5, 10, 20].includes(state.commitBranchLimit)) commitBranchLimit = state.commitBranchLimit;
     if (state.commitTraversal === 'full' || state.commitTraversal === 'first_parent') {
       commitTraversal = state.commitTraversal;
     }
     syncSegmentedControls();
+    updateSearchTargetUI();
     updateTreeFilterControls();
     updateTargetFilterSummary();
     updateRange();
@@ -166,6 +240,9 @@
     if (!online && progressWasActive) {
       progressWasActive = false;
       searchInFlight = false;
+      activeSearchRequestId = null;
+      activePrepareRequestId = null;
+      updateSearchAvailability();
       setStatus('Server stopped before embedding completed.', false);
     }
   }
@@ -191,11 +268,12 @@
   }
 
   function applyIndexProgress(progress) {
+    if (!searchInFlight && activePrepareRequestId === null) return;
     const cancel = byId('cancelEmbeddingBtn');
     if (!progress?.active || !progress.total) {
       if (progressWasActive) {
         progressWasActive = false;
-        const rankingUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
+        const rankingUnit = isBranchSearch() ? 'branches' : byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
         setStatus(searchInFlight ? `Ranking ${rankingUnit}…` : '', false);
       } else if (cancel && !searchInFlight) {
         cancel.hidden = true;
@@ -209,7 +287,7 @@
     const eta = formatDuration(progress.eta);
     if (elapsed) timing.push(elapsed);
     if (eta) timing.push(`ETA ${eta}`);
-    const progressUnit = byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
+    const progressUnit = isBranchSearch() ? 'branch file diffs' : byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
     const progressPhase = !progress.phase || progress.phase === 'Embedding'
       ? `Embedding ${progressUnit}`
       : progress.phase;
@@ -333,6 +411,7 @@
 
   function renderBranchOptions(branches) {
     gitBranches = Array.isArray(branches) ? branches : [];
+    renderBranchBaseOptions();
     const select = byId('commitBranchFilterSelect');
     if (!select) return;
     select.innerHTML = '';
@@ -643,11 +722,16 @@
   }
 
   function requestPrepareDiff() {
+    if (searchInFlight || activePrepareRequestId !== null) return;
+    activePrepareRequestId = `${sessionId}:prepare:${++searchSequence}`;
+    updateSearchAvailability();
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
-    const unitLabel = searchTarget === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
+    const unitLabel = isBranchSearch() ? 'branch changes' : searchTarget === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
     if (byId('diffStatus')) byId('diffStatus').textContent = `Checking ${unitLabel}…`;
     vscode.postMessage({
       command: 'prepareDiffSearch',
+      prepareRequestId: activePrepareRequestId,
+      branchBaseRef,
       lang: 'auto',
       scope: 'changed',
       searchMode: byId('searchModeSelect')?.value || 'semantic',
@@ -655,8 +739,8 @@
       includePatterns: byId('includePatternsInput')?.value || '',
       excludePatterns: byId('excludePatternsInput')?.value || '',
       excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
-      diffBaseRef: byId('diffBaseRefInput')?.value || '',
-      diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      diffBaseRef: isBranchSearch() ? '' : byId('diffBaseRefInput')?.value || '',
+      diffHeadRef: isBranchSearch() ? '' : byId('diffHeadRefInput')?.value || '',
       branchRef: commitBranchFilter,
       firstParent: commitTraversal === 'first_parent',
       force: false,
@@ -664,6 +748,7 @@
   }
 
   function runSearch() {
+    if (searchInFlight || activePrepareRequestId !== null) return;
     const query = byId('searchInput')?.value.trim() || '';
     if (!query) {
       setStatus('Enter a query first.', false);
@@ -671,12 +756,16 @@
       return;
     }
     searchInFlight = true;
+    activeSearchRequestId = `${sessionId}:search:${++searchSequence}`;
+    updateSearchAvailability();
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
-    setStatus(searchTarget === 'diff_commits' ? 'Searching commit file diffs…' : 'Searching diff hunks…', true);
+    setStatus(isBranchSearch() ? 'Searching branches by their changes…' : searchTarget === 'diff_commits' ? 'Searching commit file diffs…' : 'Searching diff hunks…', true);
     byId('emptyState')?.setAttribute('hidden', '');
     const translation = translationSettings();
     vscode.postMessage({
       command: 'search',
+      searchRequestId: activeSearchRequestId,
+      branchBaseRef,
       text: query,
       lang: 'auto',
       scope: 'changed',
@@ -685,8 +774,8 @@
       includePatterns: byId('includePatternsInput')?.value || '',
       excludePatterns: byId('excludePatternsInput')?.value || '',
       excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
-      diffBaseRef: byId('diffBaseRefInput')?.value || '',
-      diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      diffBaseRef: isBranchSearch() ? '' : byId('diffBaseRefInput')?.value || '',
+      diffHeadRef: isBranchSearch() ? '' : byId('diffHeadRefInput')?.value || '',
       branchRef: commitBranchFilter,
       firstParent: commitTraversal === 'first_parent',
       translateEnabled: translation.enable,
@@ -723,6 +812,7 @@
   }
 
   function resultTitle(result, file, line) {
+    if (result.symbol_kind === 'diff_branch') return result.branch_name;
     if (result.symbol_kind === 'diff_commit') {
       return result.commit_subject || result.function_name || result.name || 'Working tree changes';
     }
@@ -732,6 +822,9 @@
   }
 
   function resultContext(result, isCommitDiff) {
+    if (result.symbol_kind === 'diff_branch') {
+      return `${result.branch_commit_count} commits · ${result.branch_file_count} files · Best match: ${result.scored_file_path}`;
+    }
     if (!isCommitDiff) return result.commit_subject || '';
     const parts = [];
     if (result.commit_hash) parts.push(shortRef(result.commit_hash));
@@ -747,6 +840,10 @@
 
   function renderResults(results, folderPath, meta) {
     searchInFlight = false;
+    progressWasActive = false;
+    activeSearchRequestId = null;
+    updateSearchAvailability();
+    updateBranchSearchSummary(meta);
     currentResults = Array.isArray(results) ? results : [];
     currentFolderPath = folderPath || currentFolderPath;
     const container = byId('results');
@@ -756,8 +853,8 @@
     if (!currentResults.length) {
       container.innerHTML =
         '<div class="empty-state" id="emptyState">' +
-        '<div class="empty-title">No matching changes</div>' +
-        '<div class="empty-hint">Check the language and compare range, or try another query.</div>' +
+        `<div class="empty-title">${meta?.search_target === 'diff_branches' ? 'No matching branches' : 'No matching changes'}</div>` +
+        `<div class="empty-hint">${meta?.search_target === 'diff_branches' ? 'Try another query or comparison base. Branches already contained in the base have no changes to search.' : 'Check the file filters and compare range, or try another query.'}</div>` +
         '</div>';
       const cacheSuffix = meta?.diff_embedding_cache_hit ? ' · cached embeddings' : '';
       setStatus(`0 results${cacheSuffix}`, false);
@@ -765,15 +862,18 @@
     }
 
     const cacheSource = meta?.diff_embedding_cache_source;
-    const cacheSuffix = cacheSource === 'memory' || cacheSource === 'disk'
+    const cacheSuffix = cacheSource === 'incremental'
+      ? ` · ${meta.num_reused_embeddings || 0} reused / ${meta.num_new_embeddings || 0} new embeddings`
+      : cacheSource === 'memory' || cacheSource === 'disk' || cacheSource === 'units'
       ? ' · cached embeddings'
       : cacheSource === 'fresh' ? ' · embeddings saved' : '';
     setStatus(`${currentResults.length} result${currentResults.length === 1 ? '' : 's'}${cacheSuffix}`, false);
     currentResults.forEach((result, index) => {
       const card = document.createElement('article');
+      const isBranch = result.symbol_kind === 'diff_branch';
       const isCommitDiff = result.symbol_kind === 'diff_commit';
-      const isDiff = result.symbol_kind === 'diff_hunk' || isCommitDiff;
-      card.className = `result-item${isDiff ? ' diff-item' : ''}`;
+      const isDiff = result.symbol_kind === 'diff_hunk' || isCommitDiff || isBranch;
+      card.className = `result-item${isDiff ? ' diff-item' : ''}${isBranch ? ' branch-result' : ''}`;
       const file = result.file_path || result.file || '';
       const line = Number(result.lineno || result.line_number || 1);
       const rankScore = result.hybrid_score ?? result.score ?? result.similarity;
@@ -786,15 +886,43 @@
         `<div class="function-name">${escapeHtml(resultTitle(result, file, line))}</div>` +
         (context ? `<div class="result-context">${escapeHtml(context)}</div>` : '') +
         '</div>' +
-        (score === null ? '' : `<span class="score-badge" title="Match score">${score}%</span>`) +
+        (result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="Match score">${score}%</span>`) +
         '</div>';
 
       card.addEventListener('click', () => openResultDiff(result, file, line));
 
+      if (isBranch) {
+        if (result.branch_aliases?.length) {
+          const aliases = document.createElement('div');
+          aliases.className = 'result-context branch-aliases';
+          aliases.textContent = `Also ${result.branch_aliases.join(', ')}`;
+          card.appendChild(aliases);
+        }
+        const evidence = document.createElement('div');
+        evidence.className = 'branch-evidence';
+        const label = document.createElement('div');
+        label.className = 'branch-evidence-label';
+        label.textContent = 'Matching changes';
+        evidence.appendChild(label);
+        (result.matching_commits || []).forEach((entry) => {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'branch-evidence-item';
+          button.innerHTML = `<span>${escapeHtml(entry.commit_subject)}</span><small>${escapeHtml(shortRef(entry.commit_hash))} · ${escapeHtml(entry.scored_file_path)}</small>`;
+          button.addEventListener('click', (event) => {
+            event.stopPropagation();
+            openResultDiff(entry, entry.file_path, Number(entry.lineno || 1));
+          });
+          evidence.appendChild(button);
+        });
+        card.appendChild(evidence);
+      }
+
       const commitFiles = Array.isArray(result.commit_hunks) ? result.commit_hunks : [];
-      if (commitFiles.length > 1) {
+      if (!isBranch && commitFiles.length > 1) {
         const details = document.createElement('details');
         details.className = 'diff-commit-files';
+        details.addEventListener('click', (event) => event.stopPropagation());
         details.innerHTML = `<summary>Files in this commit (${commitFiles.length})</summary>`;
         commitFiles.forEach((entry) => {
           const fileButton = document.createElement('button');
@@ -823,7 +951,7 @@
       const openButton = document.createElement('button');
       openButton.type = 'button';
       openButton.className = 'diff-action-btn open-diff-action';
-      openButton.textContent = 'Open Diff';
+      openButton.textContent = isBranch ? 'Open Best Diff' : 'Open Diff';
       openButton.addEventListener('click', (event) => {
         event.stopPropagation();
         openResultDiff(result, file, line);
@@ -854,12 +982,14 @@
     byId('searchInput')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') runSearch();
     });
+    byId('searchInput')?.addEventListener('input', invalidateSearch);
     byId('refreshDiffSearchBtn')?.addEventListener('click', requestPrepareDiff);
     byId('reloadCommitsBtn')?.addEventListener('click', () => {
       requestGitBranches();
       requestGitCommits();
     });
     byId('commitBranchFilterSelect')?.addEventListener('change', (event) => {
+      invalidateSearch();
       commitBranchFilter = event.currentTarget.value || '';
       updateTreeFilterControls();
       saveState();
@@ -873,6 +1003,7 @@
       requestGitCommits();
     });
     byId('commitTraversalSelect')?.addEventListener('change', (event) => {
+      invalidateSearch();
       commitTraversal = event.currentTarget.value === 'first_parent' ? 'first_parent' : 'full';
       updateTreeFilterControls();
       saveState();
@@ -887,29 +1018,47 @@
     ['searchModeSelect', 'searchTargetSelect'].forEach((id) => {
       byId(id)?.addEventListener('change', () => {
         syncSegmentedControls();
+        updateSearchTargetUI();
+        invalidateSearch();
         saveState();
       });
     });
+    byId('branchBaseRefSelect')?.addEventListener('change', (event) => {
+      invalidateSearch();
+      branchBaseRef = event.currentTarget.value;
+      if (byId('branchSearchSummary')) byId('branchSearchSummary').textContent = '';
+      saveState();
+    });
     ['diffBaseRefInput', 'diffHeadRefInput'].forEach((id) => {
-      byId(id)?.addEventListener('input', updateRange);
+      byId(id)?.addEventListener('input', () => {
+        invalidateSearch();
+        updateRange();
+      });
       byId(id)?.addEventListener('change', () => {
+        invalidateSearch();
         updateRange();
         saveState();
       });
     });
     ['includePatternsInput', 'excludePatternsInput'].forEach((id) => {
-      byId(id)?.addEventListener('input', updateTargetFilterSummary);
+      byId(id)?.addEventListener('input', () => {
+        invalidateSearch();
+        updateTargetFilterSummary();
+      });
       byId(id)?.addEventListener('change', saveState);
     });
     byId('excludeDocumentationToggle')?.addEventListener('change', () => {
+      invalidateSearch();
       updateTargetFilterSummary();
       saveState();
     });
     byId('translateToggle')?.addEventListener('change', () => {
+      invalidateSearch();
       updateTranslationSummary();
       updateTranslationSettings({ enable: Boolean(byId('translateToggle').checked) });
     });
     byId('geminiModelSelect')?.addEventListener('change', () => {
+      invalidateSearch();
       updateTranslationSummary();
       updateTranslationSettings({ model: byId('geminiModelSelect').value });
     });
@@ -917,6 +1066,10 @@
 
   window.addEventListener('message', (event) => {
     const message = event.data || {};
+    if (typeof message.searchRequestId === 'string' && message.searchRequestId !== activeSearchRequestId) return;
+    if (typeof message.prepareRequestId === 'string' && message.prepareRequestId !== activePrepareRequestId) return;
+    if (['results', 'translatedQuery'].includes(message.type) && message.searchRequestId !== activeSearchRequestId) return;
+    if (['diffPrepared', 'diffPrepareError'].includes(message.type) && message.prepareRequestId !== activePrepareRequestId) return;
     if (message.type === 'initState') {
       restoreState(message.state);
       requestGitCommits();
@@ -969,11 +1122,18 @@
       return;
     }
     if (message.type === 'diffPrepared') {
+      activePrepareRequestId = null;
+      progressWasActive = false;
+      updateSearchAvailability();
       const data = message.data || {};
+      setStatus(data.cancelled ? data.message || 'Diff preparation cancelled.' : '', false);
+      updateBranchSearchSummary(data);
       const status = byId('diffStatus');
       const unitCount = data.num_diff_units ?? data.num_diff_hunks ?? 0;
       const source = data.diff_embedding_cache_source;
-      const embeddingState = source === 'memory' || source === 'disk'
+      const embeddingState = source === 'incremental'
+        ? `${data.num_reused_embeddings || 0} reused / ${data.num_new_embeddings || 0} new`
+        : source === 'memory' || source === 'disk' || source === 'units'
         ? `cached (${source})`
         : source === 'fresh' ? 'saved' : source;
       if (status) {
@@ -984,6 +1144,10 @@
       return;
     }
     if (message.type === 'diffPrepareError') {
+      activePrepareRequestId = null;
+      progressWasActive = false;
+      updateSearchAvailability();
+      setStatus('', false);
       const status = byId('diffStatus');
       if (status) status.textContent = message.message || 'Failed to prepare the diff.';
       return;
@@ -997,6 +1161,9 @@
     }
     if (message.type === 'error') {
       searchInFlight = false;
+      progressWasActive = false;
+      activeSearchRequestId = null;
+      updateSearchAvailability();
       setStatus(message.message || 'An error occurred.', false);
       return;
     }
@@ -1007,6 +1174,7 @@
 
   bindEvents();
   restoreState(vscode.getState());
+  updateSearchTargetUI();
   updateRange();
   updateTargetFilterSummary();
   updateTranslationSummary();
