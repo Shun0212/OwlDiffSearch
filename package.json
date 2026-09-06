@@ -1,6 +1,6 @@
 {
   "name": "owl-diff-search",
-  "displayName": "Owl Diff Search",
+  "displayName": "OwlDiffSearch",
   "description": "Search Git diffs by intent and open matching changes in VS Code's native diff editor.",
   "publisher": "owl-diff-search-local",
   "version": "0.1.0",
@@ -27,7 +27,7 @@
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": false,
-      "description": "Owl Diff Search executes Git and a local Python model server in the open workspace."
+      "description": "OwlDiffSearch executes Git and a local Python model server in the open workspace."
     }
   },
   "contributes": {
@@ -35,7 +35,7 @@
       "activitybar": [
         {
           "id": "owlDiffSearch",
-          "title": "Owl Diff Search",
+          "title": "OwlDiffSearch",
           "icon": "media/owl.svg"
         }
       ]
@@ -44,7 +44,7 @@
       "owlDiffSearch": [
         {
           "id": "owlDiffSearch.sidebar",
-          "name": "Git Diff Search",
+          "name": "OwlDiffSearch",
           "type": "webview",
           "icon": "media/owl.svg"
         }
@@ -53,36 +53,36 @@
     "commands": [
       {
         "command": "owlDiffSearch.open",
-        "title": "Owl Diff Search: Open"
+        "title": "OwlDiffSearch: Open"
       },
       {
         "command": "owlDiffSearch.setupEnv",
-        "title": "Owl Diff Search: Setup Python Environment"
+        "title": "OwlDiffSearch: Setup Python Environment"
       },
       {
         "command": "owlDiffSearch.startServer",
-        "title": "Owl Diff Search: Start Server"
+        "title": "OwlDiffSearch: Start Server"
       },
       {
         "command": "owlDiffSearch.stopServer",
-        "title": "Owl Diff Search: Stop Server"
+        "title": "OwlDiffSearch: Stop Server"
       },
       {
         "command": "owlDiffSearch.cancelEmbedding",
-        "title": "Owl Diff Search: Cancel Indexing / Embedding"
+        "title": "OwlDiffSearch: Cancel Indexing / Embedding"
       },
       {
         "command": "owlDiffSearch.clearCache",
-        "title": "Owl Diff Search: Clear Cache"
+        "title": "OwlDiffSearch: Clear Cache"
       },
       {
         "command": "owlDiffSearch.removeVenv",
-        "title": "Owl Diff Search: Remove Virtual Environment"
+        "title": "OwlDiffSearch: Remove Virtual Environment"
       }
     ],
     "configuration": {
       "type": "object",
-      "title": "Owl Diff Search",
+      "title": "OwlDiffSearch",
       "properties": {
         "owlDiffSearch.modelName": {
           "type": "string",

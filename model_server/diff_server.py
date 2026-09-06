@@ -1,4 +1,4 @@
-"""FastAPI surface for the Owl Diff Search extension."""
+"""FastAPI surface for the OwlDiffSearch extension."""
 
 import asyncio
 from contextlib import asynccontextmanager, suppress
@@ -39,7 +39,7 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(
-    title="Owl Diff Search",
+    title="OwlDiffSearch",
     docs_url=None,
     redoc_url=None,
     lifespan=lifespan,

@@ -1,4 +1,4 @@
-"""Diff-hunk and commit-diff search engine used by Owl Diff Search."""
+"""Diff-hunk and commit-diff search engine used by OwlDiffSearch."""
 
 from __future__ import annotations
 

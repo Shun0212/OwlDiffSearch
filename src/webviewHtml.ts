@@ -38,7 +38,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src ${options.cspSource}; style-src ${options.cspSource}; script-src 'nonce-${options.nonce}';">
-  <title>Owl Diff Search</title>
+  <title>OwlDiffSearch</title>
   <link rel="stylesheet" href="${options.styleUri}">
 </head>
 <body class="diff-only">
@@ -46,7 +46,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
     <div class="brand">
       <img src="${options.owlPngUri}" alt="" class="brand-icon">
       <div>
-        <div class="brand-title">Owl Diff Search</div>
+        <div class="brand-title">OwlDiffSearch</div>
         <div class="brand-subtitle">Search only what changed</div>
       </div>
     </div>

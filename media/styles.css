@@ -854,6 +854,7 @@ input[type="text"]::placeholder {
 }
 
 .commit-ref,
+.commit-git-head,
 .commit-badge {
   flex: 0 0 auto;
   padding: 0.05em 0.3em;
@@ -864,10 +865,36 @@ input[type="text"]::placeholder {
 }
 
 .commit-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 32%;
   border: 1px solid var(--commit-ref-color, var(--vscode-textLink-foreground, #4f9cff));
   background: color-mix(in srgb, var(--commit-ref-color, #4f9cff) 18%, transparent);
   color: var(--commit-ref-color, var(--vscode-textLink-foreground, #4f9cff));
   font-weight: 700;
+}
+
+.commit-ref-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.commit-ref-count {
+  flex: 0 0 auto;
+  padding-left: 0.35em;
+  border-left: 1px solid currentColor;
+}
+
+.commit-git-head {
+  border: 1px solid var(--vscode-foreground, #cccccc);
+  background: var(--vscode-foreground, #cccccc);
+  color: var(--vscode-editor-background, #1e1e1e);
+  font-weight: 800;
 }
 
 .commit-subject {
@@ -879,7 +906,11 @@ input[type="text"]::placeholder {
 }
 
 .commit-meta {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 18%;
+  overflow: hidden;
+  text-overflow: ellipsis;
   color: var(--vscode-descriptionForeground, #8b949e);
   font-size: 0.9em;
   white-space: nowrap;

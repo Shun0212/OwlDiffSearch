@@ -10,7 +10,7 @@ import {
     validateGitRef,
 } from '../diffUtils';
 
-suite('Owl Diff Search', () => {
+suite('OwlDiffSearch', () => {
     test('extension activates and exposes only diff-search commands', async () => {
         const extension = vscode.extensions.getExtension('owl-diff-search-local.owl-diff-search');
         assert.ok(extension, 'Extension was not discovered by the test host');

@@ -478,7 +478,7 @@
       .trim()
       .replace(/^HEAD -> /, '')
       .replace(/^tag: /, '')
-      .replace(/^refs\/(?:heads|remotes)\//, '');
+      .replace(/^refs\/(?:heads|remotes|tags)\//, '');
   }
 
   function branchColor(value) {
@@ -488,6 +488,34 @@
       hash = ((hash << 5) - hash + label.charCodeAt(index)) | 0;
     }
     return COMMIT_COLORS[Math.abs(hash) % COMMIT_COLORS.length];
+  }
+
+  function summarizeCommitRefs(refs, preferredRef = '') {
+    let isHead = false;
+    let currentBranch = '';
+    const labels = new Set();
+    (refs || []).forEach((value) => {
+      const ref = String(value || '').trim();
+      if (ref === 'HEAD') {
+        isHead = true;
+        return;
+      }
+      if (ref.startsWith('HEAD -> ')) {
+        isHead = true;
+        currentBranch = normalizeRefLabel(ref);
+      }
+      const label = normalizeRefLabel(ref);
+      if (label) labels.add(/^(?:tag: |refs\/tags\/)/.test(ref) ? `tag: ${label}` : label);
+    });
+    const ordered = [...labels];
+    const preferred = normalizeRefLabel(preferredRef);
+    const representative = currentBranch || (labels.has(preferred) ? preferred : '')
+      || ordered.find((label) => !label.startsWith('tag: ')) || ordered[0];
+    return {
+      isHead,
+      currentBranch,
+      labels: representative ? [representative, ...ordered.filter((label) => label !== representative)] : [],
+    };
   }
 
   function computeCommitLayout(commits) {
@@ -594,18 +622,29 @@
       row.className = 'commit-row';
       row.style.height = `${COMMIT_ROW_HEIGHT}px`;
       row.dataset.hash = commit.hash;
-      row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\nClick: Base · Shift+Click: Head`;
-      const refs = (commit.refs || []).map((ref) => {
-        const label = normalizeRefLabel(ref);
-        return `<span class="commit-ref" style="--commit-ref-color: ${branchColor(label)}">${escapeHtml(label)}</span>`;
-      }).join('');
+      const refSummary = summarizeCommitRefs(commit.refs, commitBranchFilter);
+      const headTitle = refSummary.isHead
+        ? (refSummary.currentBranch ? `Git HEAD · current branch: ${refSummary.currentBranch}` : 'Git HEAD · detached')
+        : '';
+      const refTitle = [headTitle, ...refSummary.labels].filter(Boolean).join('\n');
+      row.title = `${commit.short} ${commit.subject}\n${commit.author} · ${commit.date}\n${refTitle ? `${refTitle}\n` : ''}Click: Base · Shift+Click: Head`;
+      row.setAttribute('aria-label', row.title);
+      row.classList.toggle('is-git-head', refSummary.isHead);
+      const label = refSummary.labels[0];
+      const refs = label
+        ? `<span class="commit-ref" title="${escapeHtml(refTitle)}" style="--commit-ref-color: ${branchColor(label)}">`
+          + `<span class="commit-ref-label">${escapeHtml(label)}</span>`
+          + (refSummary.labels.length > 1 ? `<span class="commit-ref-count">+${refSummary.labels.length - 1}</span>` : '')
+          + '</span>'
+        : '';
       row.innerHTML =
         `<span class="commit-hash">${escapeHtml(commit.short)}</span>` +
+        (refSummary.isHead ? `<span class="commit-git-head" title="${escapeHtml(headTitle)}">HEAD</span>` : '') +
+        '<span class="commit-badge commit-badge-base" title="Compare range: Base">Base</span>' +
+        '<span class="commit-badge commit-badge-head" title="Compare range: Head">Head</span>' +
         refs +
         `<span class="commit-subject">${escapeHtml(commit.subject)}</span>` +
-        `<span class="commit-meta">${escapeHtml(commit.date)}</span>` +
-        '<span class="commit-badge commit-badge-base">Base</span>' +
-        '<span class="commit-badge commit-badge-head">Head</span>';
+        `<span class="commit-meta">${escapeHtml(commit.date)}</span>`;
       row.addEventListener('click', (event) => {
         const input = byId(event.shiftKey ? 'diffHeadRefInput' : 'diffBaseRefInput');
         if (!input) return;

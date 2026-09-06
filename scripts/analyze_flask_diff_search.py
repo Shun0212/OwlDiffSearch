@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Evaluate Owl Diff Search against a fixed range in the cloned Flask repo."""
+"""Evaluate OwlDiffSearch against a fixed range in the cloned Flask repo."""
 
 from __future__ import annotations
 

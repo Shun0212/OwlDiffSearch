@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bootstrap the Owl Diff Search Python environment with uv."""
+"""Bootstrap the OwlDiffSearch Python environment with uv."""
 from __future__ import annotations
 
 import argparse
@@ -254,7 +254,7 @@ def resolve_torch_index(matrix: TorchBuildMatrix, build_key: str | None, overrid
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Create a virtual environment for the Owl Diff Search model server",
+        description="Create a virtual environment for the OwlDiffSearch model server",
     )
     parser.add_argument(
         "--python",
@@ -294,7 +294,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Custom index URL to use when --torch-mode=cuda. "
-            "If omitted, Owl Diff Search resolves the index from --torch-build or the default matrix entry."
+            "If omitted, OwlDiffSearch resolves the index from --torch-build or the default matrix entry."
         ),
     )
     parser.add_argument(

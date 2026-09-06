@@ -22,6 +22,22 @@ finally:
 `], { cwd: path.join(root, 'model_server'), encoding: 'utf8' });
 const fixture = JSON.parse(fixtureOutput.split('\n').find((line) => line.startsWith('FIXTURE:')).slice(8));
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'owl-branch-ui-'));
+const graphFixture = [
+  {
+    hash: 'a'.repeat(40), short: 'aaaaaaa', parents: ['b'.repeat(40)],
+    subject: 'Make authentication retries safe', author: 'Test Author', date: '2 days ago',
+    refs: ['tag: release-1', 'origin/main', ...Array.from({ length: 20 }, (_, i) => `feature/very-long-branch-name-${i}`), 'HEAD -> main'],
+  },
+  {
+    hash: 'b'.repeat(40), short: 'bbbbbbb', parents: ['c'.repeat(40)],
+    subject: 'Add request validation', author: 'Test Author', date: '3 days ago',
+    refs: ['feature/validation-with-a-very-long-name', 'origin/feature/validation-with-a-very-long-name'],
+  },
+  {
+    hash: 'c'.repeat(40), short: 'ccccccc', parents: [],
+    subject: 'Initial commit', author: 'Test Author', date: '4 days ago', refs: [],
+  },
+];
 
 async function main() {
   let origin;
@@ -51,7 +67,7 @@ async function main() {
     const page = await browser.newPage({ viewport: { width: 360, height: 900 } });
     const errors = [];
     page.on('pageerror', (error) => errors.push(error.message));
-    await page.addInitScript(({ fixture }) => {
+    await page.addInitScript(({ fixture, graphFixture }) => {
       let state;
       window.testMessages = [];
       window.acquireVsCodeApi = () => ({
@@ -70,12 +86,67 @@ async function main() {
           if (message.command === 'search' && !window.testHoldSearch) reply = {
             type: 'results', results: fixture.results, meta: fixture, searchRequestId: message.searchRequestId,
           };
+          if (message.command === 'getGitCommits') reply = {
+            type: 'gitCommits', commits: graphFixture, hasMore: false, requestId: message.requestId,
+          };
           if (message.command === 'checkServerStatus') reply = { type: 'serverStatus', online: true };
           if (reply) setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: reply })), 0);
         },
       });
-    }, { fixture });
+    }, { fixture, graphFixture });
     await page.goto(origin);
+    assert.equal(await page.title(), 'OwlDiffSearch');
+    assert.equal(await page.locator('.brand-title').innerText(), 'OwlDiffSearch');
+    const currentRow = page.locator(`.commit-row[data-hash="${graphFixture[0].hash}"]`);
+    const previousRow = page.locator(`.commit-row[data-hash="${graphFixture[1].hash}"]`);
+    await currentRow.waitFor();
+    assert.equal(await currentRow.locator('.commit-ref').count(), 1);
+    assert.equal(await currentRow.locator('.commit-ref-label').innerText(), 'main');
+    assert.equal(await currentRow.locator('.commit-ref-count').innerText(), '+22');
+    assert.equal(await currentRow.locator('.commit-git-head').innerText(), 'HEAD');
+    const allRefs = await currentRow.locator('.commit-ref').getAttribute('title');
+    for (const ref of graphFixture[0].refs) assert.ok(allRefs.includes(ref.replace('HEAD -> ', '')));
+    await previousRow.click();
+    await currentRow.click({ modifiers: ['Shift'] });
+    assert.equal(await previousRow.locator('.commit-badge-base').isVisible(), true);
+    assert.equal(await currentRow.locator('.commit-badge-head').isVisible(), true);
+    assert.equal(await currentRow.locator('.commit-git-head').isVisible(), true);
+    for (const width of [280, 360, 520]) {
+      await page.setViewportSize({ width, height: 900 });
+      const layout = await currentRow.evaluate((row) => {
+        const graph = document.getElementById('commitGraph');
+        const rect = graph.getBoundingClientRect();
+        const badges = ['.commit-git-head', '.commit-badge-head', '.commit-ref-count'].map((selector) => {
+          const badge = row.querySelector(selector).getBoundingClientRect();
+          return badge.width > 0 && badge.left >= rect.left && badge.right <= rect.right;
+        });
+        return { badges, overflow: graph.scrollWidth > graph.clientWidth, rowHeight: row.getBoundingClientRect().height };
+      });
+      assert.deepEqual(layout.badges, [true, true, true], `HEAD and grouped refs must remain visible at ${width}px`);
+      assert.equal(layout.overflow, false, `Commit refs must not cause horizontal scrolling at ${width}px`);
+      assert.equal(layout.rowHeight, 34, 'Grouping must preserve graph alignment');
+      await page.screenshot({ path: path.join(artifacts, `commit-refs-${width}.png`), fullPage: true });
+    }
+    // Base and Head may refer to the same commit; both endpoints and Git HEAD stay visible.
+    await currentRow.click();
+    assert.equal(await currentRow.locator('.commit-badge-base').isVisible(), true);
+    await page.setViewportSize({ width: 280, height: 900 });
+    assert.equal(await currentRow.locator('.commit-git-head').isVisible(), true);
+    assert.equal(await currentRow.locator('.commit-badge-head').isVisible(), true);
+    // Detached HEAD has no attached branch, but must still have its own marker.
+    await page.evaluate((commits) => {
+      window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'gitCommits', commits: [{ ...commits[0], refs: ['HEAD', 'tag: release-1'] }, ...commits.slice(1)], hasMore: false,
+      } }));
+    }, graphFixture);
+    assert.match(await currentRow.locator('.commit-git-head').getAttribute('title'), /detached/);
+    assert.equal(await currentRow.locator('.commit-ref-label').innerText(), 'tag: release-1');
+    assert.equal(await currentRow.locator('.commit-ref-count').count(), 0);
+    await page.evaluate((commits) => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'gitCommits', commits, hasMore: false } }));
+    }, graphFixture);
+    await currentRow.click();
+    await currentRow.click({ modifiers: ['Shift'] });
     await page.getByRole('button', { name: 'Branches', exact: true }).click();
     assert.equal(await page.locator('#branchSearchOptions').isVisible(), true);
     assert.equal(await page.locator('.history-browser').isVisible(), false);
@@ -177,7 +248,7 @@ async function main() {
     assert.equal(await page.locator('#status').getAttribute('aria-busy'), 'false');
     assert.equal(await page.locator('#searchBtn').isEnabled(), true);
     assert.deepEqual(errors, []);
-    console.log(JSON.stringify({ ok: true, duplicateSearchesPrevented: true, staleResponsesIgnored: true, incrementalCacheStatus: true, artifacts }));
+    console.log(JSON.stringify({ ok: true, groupedCommitRefs: true, headVisible: true, branding: true, duplicateSearchesPrevented: true, staleResponsesIgnored: true, incrementalCacheStatus: true, artifacts }));
   } finally {
     if (browser) await browser.close();
     await new Promise((resolve) => server.close(resolve));

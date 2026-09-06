@@ -500,7 +500,7 @@ function getAutoTorchRecommendation(
 	const oldestBuild = orderedBuilds[orderedBuilds.length - 1];
 	const minDriver = oldestBuild ? getDriverRequirement(oldestBuild, platformKey) : undefined;
 	return {
-		reason: `Detected NVIDIA driver ${gpuInfo.driverVersion}, which is older than the supported Owl Diff Search CUDA matrix${minDriver ? ` (${oldestBuild.label} requires >= ${minDriver})` : ''}. Falls back to the CPU build automatically.`
+		reason: `Detected NVIDIA driver ${gpuInfo.driverVersion}, which is older than the supported OwlDiffSearch CUDA matrix${minDriver ? ` (${oldestBuild.label} requires >= ${minDriver})` : ''}. Falls back to the CPU build automatically.`
 	};
 }
 
@@ -724,7 +724,7 @@ async function findLaunchServerPort(): Promise<{ port: number; reusedExisting: b
 	}
 
 	throw new Error(
-		`No available Owl Diff Search server port found in range ${basePort}-${basePort + SERVER_PORT_SCAN_LIMIT - 1}.`
+		`No available OwlDiffSearch server port found in range ${basePort}-${basePort + SERVER_PORT_SCAN_LIMIT - 1}.`
 	);
 }
 
@@ -1034,7 +1034,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				webviewView.webview.postMessage({ type: 'status', message: 'Setting up Python environment...' });
 				const setupResult = await vscode.commands.executeCommand<boolean | undefined>('owlDiffSearch.setupEnv', { startServerAfterSetup: false });
 				if (setupResult === false || !fs.existsSync(pythonBin)) {
-					webviewView.webview.postMessage({ type: 'error', message: 'Environment setup did not complete. Check the Owl Diff Search OUTPUT panel.' });
+					webviewView.webview.postMessage({ type: 'error', message: 'Environment setup did not complete. Check the OwlDiffSearch OUTPUT panel.' });
 					return false;
 				}
 			}
@@ -1044,11 +1044,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 			webviewView.webview.postMessage({ type: 'serverStatus', online: serverPort !== undefined, port: serverPort });
 			webviewView.webview.postMessage({
 				type: 'status',
-				message: serverPort !== undefined ? 'Server is ready. Enter a query to search.' : 'Server start requested, but readiness check timed out. Check the Owl Diff Search OUTPUT panel.'
+				message: serverPort !== undefined ? 'Server is ready. Enter a query to search.' : 'Server start requested, but readiness check timed out. Check the OwlDiffSearch OUTPUT panel.'
 			});
 			return serverPort !== undefined;
 		} catch {
-			webviewView.webview.postMessage({ type: 'error', message: 'Setup and start failed. Check the Owl Diff Search OUTPUT panel.' });
+			webviewView.webview.postMessage({ type: 'error', message: 'Setup and start failed. Check the OwlDiffSearch OUTPUT panel.' });
 			return false;
 		}
 	}
@@ -1156,7 +1156,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 }
                                 const serverPort = await resolveActiveServerPort();
                                 if (serverPort === undefined) {
-                                        replyToPrepare({ type: 'diffPrepareError', message: 'Owl Diff Search server is not running.' });
+                                        replyToPrepare({ type: 'diffPrepareError', message: 'OwlDiffSearch server is not running.' });
                                         return;
                                 }
                                 const workspaceFolder = workspaceFolders[0];
@@ -1268,6 +1268,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 					[
 						'log',
 						'--date-order',
+						'--decorate=short',
 						...(firstParent ? ['--first-parent'] : []),
 						...revisionArgs,
 						`--skip=${offset}`,
@@ -1510,11 +1511,11 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				await this.setupAndStartServer(webviewView);
 			}
 			if (msg.command === 'stopServer') {
-				console.log('[Owl Diff Search] stopServer command received from Webview');
+				console.log('[OwlDiffSearch] stopServer command received from Webview');
 				void vscode.commands.executeCommand('owlDiffSearch.stopServer');
 			}
 			if (msg.command === 'cancelEmbedding') {
-				console.log('[Owl Diff Search] cancelEmbedding command received from Webview');
+				console.log('[OwlDiffSearch] cancelEmbedding command received from Webview');
 				webviewView.webview.postMessage({ type: 'status', message: 'Cancelling indexing / embedding...' });
 				const serverPort = await resolveActiveServerPort();
 				if (serverPort === undefined) {
@@ -1623,7 +1624,7 @@ export function activate(context: vscode.ExtensionContext) {
 	activeServerPort = getConfiguredBasePort();
 
 	// OUTPUT パネル: サーバー起動・環境構築のログを共通のチャネルに流す
-	const owlOutputChannel = vscode.window.createOutputChannel('Owl Diff Search');
+	const owlOutputChannel = vscode.window.createOutputChannel('OwlDiffSearch');
 
 	// git の任意リビジョンの内容を仮想ドキュメントとして提供（ネイティブ diff エディタ用）
 	context.subscriptions.push(
@@ -1650,18 +1651,18 @@ export function activate(context: vscode.ExtensionContext) {
 		vscode.commands.registerCommand('owlDiffSearch.cancelEmbedding', async () => {
 			const serverPort = await resolveActiveServerPort();
 			if (serverPort === undefined) {
-				vscode.window.showWarningMessage('Owl Diff Search server is not running.');
+				vscode.window.showWarningMessage('OwlDiffSearch server is not running.');
 				return;
 			}
 			try {
 				const res = await fetch(getServerUrl('/cancel_embedding', serverPort), { method: 'POST' });
 				if (res.ok) {
-					vscode.window.showInformationMessage('Owl Diff Search indexing / embedding cancellation requested.');
+					vscode.window.showInformationMessage('OwlDiffSearch indexing / embedding cancellation requested.');
 				} else {
-					vscode.window.showWarningMessage(`Failed to cancel Owl Diff Search indexing / embedding: HTTP ${res.status}`);
+					vscode.window.showWarningMessage(`Failed to cancel OwlDiffSearch indexing / embedding: HTTP ${res.status}`);
 				}
 			} catch (error) {
-				vscode.window.showWarningMessage(`Failed to cancel Owl Diff Search indexing / embedding: ${error}`);
+				vscode.window.showWarningMessage(`Failed to cancel OwlDiffSearch indexing / embedding: ${error}`);
 			}
 		})
 	);
@@ -1751,7 +1752,7 @@ export function activate(context: vscode.ExtensionContext) {
 			sidebarProvider.notifyServerStatus(false);
 			sidebarProvider.notifyError(errMsg);
 			void vscode.window.showErrorMessage(errMsg, { modal: true });
-			serverOutputChannel.appendLine(`\n[Owl Diff Search] Cannot bind to host "${bindHost}". This address is not assigned to this machine.`);
+			serverOutputChannel.appendLine(`\n[OwlDiffSearch] Cannot bind to host "${bindHost}". This address is not assigned to this machine.`);
 			return;
 		}
 
@@ -1774,10 +1775,10 @@ export function activate(context: vscode.ExtensionContext) {
 				intentionallyStoppedServerProcesses.add(serverProcess);
 				terminateServerProcess(
 					serverProcess,
-					() => serverOutputChannel.appendLine('\n[Owl Diff Search] Server did not exit after SIGTERM; sending SIGKILL.'),
+					() => serverOutputChannel.appendLine('\n[OwlDiffSearch] Server did not exit after SIGTERM; sending SIGKILL.'),
 					() => {
-						serverOutputChannel.appendLine('\n[Owl Diff Search] Warning: server process did not exit after SIGKILL.');
-						void vscode.window.showWarningMessage('Owl Diff Search server did not exit after SIGKILL. It may need to be killed manually.');
+						serverOutputChannel.appendLine('\n[OwlDiffSearch] Warning: server process did not exit after SIGKILL.');
+						void vscode.window.showWarningMessage('OwlDiffSearch server did not exit after SIGKILL. It may need to be killed manually.');
 					}
 				);
 				serverProcess = undefined;
@@ -1785,10 +1786,10 @@ export function activate(context: vscode.ExtensionContext) {
 
 			serverOutputChannel.clear();
 			serverOutputChannel.show(true);
-			serverOutputChannel.appendLine(`[Owl Diff Search] Starting server...`);
-			serverOutputChannel.appendLine(`[Owl Diff Search] Port: ${selectedPort}`);
-			serverOutputChannel.appendLine(`[Owl Diff Search] Python: ${pythonBin}`);
-			serverOutputChannel.appendLine(`[Owl Diff Search] Working dir: ${serverDir}`);
+			serverOutputChannel.appendLine(`[OwlDiffSearch] Starting server...`);
+			serverOutputChannel.appendLine(`[OwlDiffSearch] Port: ${selectedPort}`);
+			serverOutputChannel.appendLine(`[OwlDiffSearch] Python: ${pythonBin}`);
+			serverOutputChannel.appendLine(`[OwlDiffSearch] Working dir: ${serverDir}`);
 			serverOutputChannel.appendLine('---');
 
 			const child = cp.spawn(
@@ -1808,7 +1809,7 @@ export function activate(context: vscode.ExtensionContext) {
 				}
 			);
 			serverProcess = child;
-			serverOutputChannel.appendLine(`[Owl Diff Search] Process ID: ${child.pid ?? 'unavailable'}`);
+			serverOutputChannel.appendLine(`[OwlDiffSearch] Process ID: ${child.pid ?? 'unavailable'}`);
 
 			child.stdout?.on('data', (data: Buffer) => {
 				serverOutputChannel.append(data.toString());
@@ -1840,14 +1841,14 @@ export function activate(context: vscode.ExtensionContext) {
 					isServerStarting = false;
 				}
 				if (stoppedIntentionally) {
-					serverOutputChannel.appendLine(`\n[Owl Diff Search] Server stopped.`);
+					serverOutputChannel.appendLine(`\n[OwlDiffSearch] Server stopped.`);
 				} else {
 					const exitReason = code !== null
 						? `exit code ${code}`
 						: signal
 							? `signal ${signal}`
 							: 'an unknown reason';
-					serverOutputChannel.appendLine(`\n[Owl Diff Search] Server process exited unexpectedly (${exitReason}).`);
+					serverOutputChannel.appendLine(`\n[OwlDiffSearch] Server process exited unexpectedly (${exitReason}).`);
 				}
 				// An older child may close after a replacement has already started.
 				// Its event must not clear the new child's status or startup poll.
@@ -1859,7 +1860,7 @@ export function activate(context: vscode.ExtensionContext) {
 				sidebarProvider.notifyServerStatus(runningPort !== undefined, runningPort);
 			});
 			child.on('error', (err: Error) => {
-				serverOutputChannel.appendLine(`\n[Owl Diff Search] Failed to start: ${err.message}`);
+				serverOutputChannel.appendLine(`\n[OwlDiffSearch] Failed to start: ${err.message}`);
 				if (serverProcess === child) {
 					clearServerStartupPoll();
 					isServerStarting = false;
@@ -1871,8 +1872,8 @@ export function activate(context: vscode.ExtensionContext) {
 			});
 
 			const portMessage = selectedPort === DEFAULT_SERVER_PORT
-				? 'Owl Diff Search server starting...'
-				: `Owl Diff Search server starting on port ${selectedPort}...`;
+				? 'OwlDiffSearch server starting...'
+				: `OwlDiffSearch server starting on port ${selectedPort}...`;
 			vscode.window.showInformationMessage(portMessage);
 		} catch (err) {
 			clearServerStartupPoll();
@@ -1894,7 +1895,7 @@ export function activate(context: vscode.ExtensionContext) {
 				activeServerPort = startupPort;
 				isServerStarting = false;
 				sidebarProvider.notifyServerStatus(true, startupPort);
-				vscode.window.showInformationMessage(`Owl Diff Search server is ready on port ${startupPort}.`);
+				vscode.window.showInformationMessage(`OwlDiffSearch server is ready on port ${startupPort}.`);
 			} else if (retries >= maxRetries) {
 				clearServerStartupPoll();
 				isServerStarting = false;
@@ -1911,14 +1912,14 @@ export function activate(context: vscode.ExtensionContext) {
 			intentionallyStoppedServerProcesses.add(serverProcess);
 			terminateServerProcess(
 				serverProcess,
-				() => serverOutputChannel.appendLine('\n[Owl Diff Search] Server did not exit after SIGTERM; sending SIGKILL.'),
+				() => serverOutputChannel.appendLine('\n[OwlDiffSearch] Server did not exit after SIGTERM; sending SIGKILL.'),
 				() => {
-					serverOutputChannel.appendLine('\n[Owl Diff Search] Warning: server process did not exit after SIGKILL.');
-					void vscode.window.showWarningMessage('Owl Diff Search server did not exit after SIGKILL. It may need to be killed manually.');
+					serverOutputChannel.appendLine('\n[OwlDiffSearch] Warning: server process did not exit after SIGKILL.');
+					void vscode.window.showWarningMessage('OwlDiffSearch server did not exit after SIGKILL. It may need to be killed manually.');
 				}
 			);
 			sidebarProvider.notifyServerStatus(false);
-			vscode.window.showInformationMessage('Owl Diff Search server stopping...');
+			vscode.window.showInformationMessage('OwlDiffSearch server stopping...');
 		} else {
 			void resolveActiveServerPort().then((serverPort) => {
 				if (serverPort !== undefined) {
@@ -1939,8 +1940,8 @@ export function activate(context: vscode.ExtensionContext) {
 				intentionallyStoppedServerProcesses.add(serverProcess);
 				terminateServerProcess(
 					serverProcess,
-					() => serverOutputChannel.appendLine('\n[Owl Diff Search] Server did not exit after SIGTERM during disposal; sending SIGKILL.'),
-					() => serverOutputChannel.appendLine('\n[Owl Diff Search] Warning: server process did not exit after SIGKILL during disposal.')
+					() => serverOutputChannel.appendLine('\n[OwlDiffSearch] Server did not exit after SIGTERM during disposal; sending SIGKILL.'),
+					() => serverOutputChannel.appendLine('\n[OwlDiffSearch] Warning: server process did not exit after SIGKILL during disposal.')
 				);
 			}
 		}
@@ -1985,7 +1986,7 @@ export function activate(context: vscode.ExtensionContext) {
 		try {
 			({ options: torchOptions, gpuInfo, autoReason } = getTorchInstallOptions());
 		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to load the Owl Diff Search torch build matrix: ${error}`);
+			vscode.window.showErrorMessage(`Failed to load the OwlDiffSearch torch build matrix: ${error}`);
 			return;
 		}
 
@@ -1994,7 +1995,7 @@ export function activate(context: vscode.ExtensionContext) {
 			ignoreFocusOut: true
 		});
 		if (!torchChoice) {
-			vscode.window.showInformationMessage('Owl Diff Search Python environment setup cancelled.');
+			vscode.window.showInformationMessage('OwlDiffSearch Python environment setup cancelled.');
 			return;
 		}
 
@@ -2024,22 +2025,22 @@ export function activate(context: vscode.ExtensionContext) {
 		isSetupRunning = true;
 		owlOutputChannel.show(true);
 		owlOutputChannel.appendLine('');
-		owlOutputChannel.appendLine(`[Owl Diff Search] Starting environment setup with uv...`);
-		owlOutputChannel.appendLine(`[Owl Diff Search] Command: ${setupCommand} ${setupArgs.join(' ')}`);
-		owlOutputChannel.appendLine(`[Owl Diff Search] Working dir: ${serverDir}`);
-		owlOutputChannel.appendLine(`[Owl Diff Search] Python request: ${pythonVersion}`);
-		owlOutputChannel.appendLine(`[Owl Diff Search] PyTorch option: ${torchChoice.label}`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] Starting environment setup with uv...`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] Command: ${setupCommand} ${setupArgs.join(' ')}`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] Working dir: ${serverDir}`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] Python request: ${pythonVersion}`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] PyTorch option: ${torchChoice.label}`);
 		if (gpuInfo.available) {
-			owlOutputChannel.appendLine(`[Owl Diff Search] NVIDIA GPU: ${gpuInfo.gpuName ?? 'Detected'} (driver ${gpuInfo.driverVersion ?? 'unknown'})`);
+			owlOutputChannel.appendLine(`[OwlDiffSearch] NVIDIA GPU: ${gpuInfo.gpuName ?? 'Detected'} (driver ${gpuInfo.driverVersion ?? 'unknown'})`);
 			if (gpuInfo.detectionSource) {
-				owlOutputChannel.appendLine(`[Owl Diff Search] NVIDIA detection source: ${gpuInfo.detectionSource}`);
+				owlOutputChannel.appendLine(`[OwlDiffSearch] NVIDIA detection source: ${gpuInfo.detectionSource}`);
 			}
 		} else if (platform === 'darwin') {
-			owlOutputChannel.appendLine('[Owl Diff Search] CUDA detection: skipped on macOS. The CPU build can still use MPS acceleration at runtime.');
+			owlOutputChannel.appendLine('[OwlDiffSearch] CUDA detection: skipped on macOS. The CPU build can still use MPS acceleration at runtime.');
 		} else {
-			owlOutputChannel.appendLine('[Owl Diff Search] NVIDIA GPU: Not detected via nvidia-smi in PATH or common install locations.');
+			owlOutputChannel.appendLine('[OwlDiffSearch] NVIDIA GPU: Not detected via nvidia-smi in PATH or common install locations.');
 		}
-		owlOutputChannel.appendLine(`[Owl Diff Search] Auto recommendation: ${autoReason}`);
+		owlOutputChannel.appendLine(`[OwlDiffSearch] Auto recommendation: ${autoReason}`);
 		owlOutputChannel.appendLine('---');
 
 		try {
@@ -2050,7 +2051,7 @@ export function activate(context: vscode.ExtensionContext) {
 			});
 		} catch (err: any) {
 			isSetupRunning = false;
-			owlOutputChannel.appendLine(`[Owl Diff Search] Failed to launch setup: ${err?.message ?? err}`);
+			owlOutputChannel.appendLine(`[OwlDiffSearch] Failed to launch setup: ${err?.message ?? err}`);
 			vscode.window.showErrorMessage(`Failed to launch environment setup: ${err?.message ?? err}`);
 			return;
 		}
@@ -2063,22 +2064,22 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 		const setupCompleted = new Promise<boolean>((resolve) => {
 			setupProcess?.on('close', (code: number | null) => {
-				owlOutputChannel.appendLine(`\n[Owl Diff Search] Setup process exited (code: ${code})`);
+				owlOutputChannel.appendLine(`\n[OwlDiffSearch] Setup process exited (code: ${code})`);
 				isSetupRunning = false;
 				setupProcess = undefined;
 				if (code === 0) {
 					const message = startServerAfterSetup
-						? 'Owl Diff Search Python environment setup completed. Starting the server...'
-						: 'Owl Diff Search Python environment setup completed.';
+						? 'OwlDiffSearch Python environment setup completed. Starting the server...'
+						: 'OwlDiffSearch Python environment setup completed.';
 					vscode.window.showInformationMessage(message);
 					resolve(true);
 				} else {
-					vscode.window.showErrorMessage(`Owl Diff Search environment setup failed (exit code: ${code}). Check the OUTPUT panel for details.`);
+					vscode.window.showErrorMessage(`OwlDiffSearch environment setup failed (exit code: ${code}). Check the OUTPUT panel for details.`);
 					resolve(false);
 				}
 			});
 			setupProcess?.on('error', (err: Error) => {
-				owlOutputChannel.appendLine(`\n[Owl Diff Search] Setup failed: ${err.message}`);
+				owlOutputChannel.appendLine(`\n[OwlDiffSearch] Setup failed: ${err.message}`);
 				isSetupRunning = false;
 				setupProcess = undefined;
 				vscode.window.showErrorMessage(`Environment setup failed: ${err.message}`);
@@ -2087,7 +2088,7 @@ export function activate(context: vscode.ExtensionContext) {
 		});
 
 		vscode.window.showInformationMessage(
-			`Owl Diff Search uv environment setup started with ${torchChoice.label}. Progress is shown in the OUTPUT panel.`
+			`OwlDiffSearch uv environment setup started with ${torchChoice.label}. Progress is shown in the OUTPUT panel.`
 		);
 		const setupSucceeded = await setupCompleted;
 		if (setupSucceeded && startServerAfterSetup) {
@@ -2095,9 +2096,9 @@ export function activate(context: vscode.ExtensionContext) {
 			if (serverPort !== undefined) {
 				activeServerPort = serverPort;
 				sidebarProvider.notifyServerStatus(true, serverPort);
-				vscode.window.showInformationMessage(`Owl Diff Search server is already running on port ${serverPort}.`);
+				vscode.window.showInformationMessage(`OwlDiffSearch server is already running on port ${serverPort}.`);
 			} else {
-				owlOutputChannel.appendLine('[Owl Diff Search] Setup completed; starting server automatically...');
+				owlOutputChannel.appendLine('[OwlDiffSearch] Setup completed; starting server automatically...');
 				await vscode.commands.executeCommand('owlDiffSearch.startServer');
 			}
 		}
@@ -2123,7 +2124,7 @@ export function activate(context: vscode.ExtensionContext) {
 		}
 		try {
 			fs.rmSync(owlIndexDir, { recursive: true, force: true });
-			vscode.window.showInformationMessage('Owl Diff Search cache cleared.');
+			vscode.window.showInformationMessage('OwlDiffSearch cache cleared.');
 		} catch (error) {
 			vscode.window.showErrorMessage(`Failed to clear cache: ${error}`);
 		}
@@ -2178,10 +2179,10 @@ export function activate(context: vscode.ExtensionContext) {
 		setTimeout(async () => {
 			const serverPort = await resolveActiveServerPort();
 			if (serverPort !== undefined) {
-				console.log(`[Owl Diff Search] Server already running on port ${serverPort}, skipping auto-start.`);
+				console.log(`[OwlDiffSearch] Server already running on port ${serverPort}, skipping auto-start.`);
 				return;
 			}
-			console.log('[Owl Diff Search] Auto-starting server...');
+			console.log('[OwlDiffSearch] Auto-starting server...');
 			vscode.commands.executeCommand('owlDiffSearch.startServer');
 		}, 3000);
 	}

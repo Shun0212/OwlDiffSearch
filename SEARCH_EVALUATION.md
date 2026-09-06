@@ -63,6 +63,6 @@
 ## Try it in VS Code
 
 1. VS Codeで `demo_repositories/flask` をフォルダとして開きます。
-2. Owl Diff Searchを開くと `Detected languages: Python` と表示されます。
+2. OwlDiffSearchを開くと `Detected languages: Python` と表示されます。
 3. Baseに `e4e4bf65`、Headに `d318b683` を設定します。
 4. `Commits` と `Semantic` を選び、上記の意図クエリを検索します。

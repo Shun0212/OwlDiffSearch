@@ -1,4 +1,4 @@
-# Owl Diff Search
+# OwlDiffSearch
 
 Git の変更箇所だけを、自然言語またはキーワードで検索する VS Code 拡張です。
 
@@ -22,7 +22,7 @@ Git の変更箇所だけを、自然言語またはキーワードで検索す�
 
 1. リポジトリ直下で `npm ci && npx @vscode/vsce package` を実行して VSIX を作成します。
 2. VS Code のコマンドパレットで `Extensions: Install from VSIX...` を実行します。
-3. Activity Bar の Owl Diff Search を開きます。
+3. Activity Bar の OwlDiffSearch を開きます。
 4. `Setup / Start` を押します。
 
 初回セットアップには [`uv`](https://docs.astral.sh/uv/getting-started/installation/) とネットワーク接続が必要です。Python 3.11、PyTorch、検索モデルなどをローカル環境へ導入します。モデルの初回ダウンロードには時間と数 GB 程度の空き容量が必要です。
@@ -34,6 +34,7 @@ Git の変更箇所だけを、自然言語またはキーワードで検索す�
 - base / head の両方を指定すると、その範囲のコミット差分を検索します。
 - コミット一覧ではクリックで base、Shift+クリックで head を設定します。
 - BaseからHeadまでの対象コミットは緑、Baseは青、Headは黄で表示され、ブランチラベルにはブランチごとの固定色が付きます。
+- 同じコミットを指すブランチ・タグは、代表名と `+件数` にまとめます。マウスを重ねると全参照名を確認できます。現在のブランチを代表名として優先し、Gitの現在位置は独立した `HEAD` バッジ、比較範囲の端点は `Base` / `Head` バッジで表示します。
 - `Settings` の `Commit history` では、表示・検索するブランチ、表示するブランチ先端の最大数、履歴のたどり方を指定できます。
 - `Hunks` は追加・削除・contextを含む個々のunified diff hunkを検索します。
 - `Commits` は1コミット内のhunkをファイルごとにまとめて検索し、最もスコアが高いファイルをそのコミットの代表値として扱います。ワーキングツリーもファイルごとに評価し、1つの `Working tree changes` として結果を返します。
