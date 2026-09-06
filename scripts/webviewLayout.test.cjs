@@ -164,7 +164,7 @@ test('assigns stable colors to branch labels', () => {
 
 test('keeps result cards compact without inline diff bodies', () => {
   assert.match(script, /result-rank\$\{index < 3 \? ' rank-top' : ''\}/);
-  assert.match(script, /<span class="score-badge"[^>]*>\$\{score\}%<\/span>/);
+  assert.match(script, /<span class="score-badge"[^>]*>\$\{score\}<\/span>/);
   assert.doesNotMatch(script, /renderDiffSnippet/);
   assert.doesNotMatch(script, /class="result-snippet/);
   assert.doesNotMatch(script, /Semantic \$\{semantic\}/);

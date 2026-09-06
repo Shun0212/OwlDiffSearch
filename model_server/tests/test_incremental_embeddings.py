@@ -41,8 +41,12 @@ class IncrementalEmbeddingTests(unittest.TestCase):
     def assert_index_matches_fresh_vectors(self):
         state = server.diff_search_state
         expected = np.asarray([self.vector(unit["search_text"]) for unit in state.units])
-        np.testing.assert_allclose(state.embeddings, expected)
-        np.testing.assert_allclose(state.faiss_index.reconstruct_n(0, len(state.units)), expected)
+        # FAISS normalization may differ from NumPy by float32 roundoff.
+        np.testing.assert_allclose(state.embeddings, expected, rtol=1e-6)
+        np.testing.assert_allclose(state.faiss_index.reconstruct_n(0, len(state.units)), expected, rtol=1e-6)
+        query = self.vector("query")
+        scores, indices = state.faiss_index.search(query[None, :], len(state.units))
+        np.testing.assert_allclose(scores[0], (expected @ query)[indices[0]], rtol=1e-6)
 
     def test_only_added_diff_is_encoded_and_index_order_is_preserved(self):
         first = self.case.search(mode="semantic")

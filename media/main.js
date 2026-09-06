@@ -831,10 +831,13 @@
       : normalizedFile;
   }
 
-  function scorePercent(value) {
-    return typeof value === 'number' && Number.isFinite(value)
-      ? Math.round(Math.max(0, Math.min(1, value)) * 100)
-      : null;
+  function formatScore(value, searchMode) {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return null;
+    }
+    return searchMode === 'bm25'
+      ? `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`
+      : value.toFixed(3);
   }
 
   function openResultDiff(result, file, line) {
@@ -917,7 +920,12 @@
       const file = result.file_path || result.file || '';
       const line = Number(result.lineno || result.line_number || 1);
       const rankScore = result.hybrid_score ?? result.score ?? result.similarity;
-      const score = scorePercent(rankScore);
+      const score = formatScore(rankScore, result.search_mode);
+      const scoreTitle = {
+        semantic: 'Cosine similarity',
+        hybrid: 'Hybrid score',
+        bm25: 'Normalized BM25 score',
+      }[result.search_mode] || 'Match score';
       const context = resultContext(result, isCommitDiff);
       card.innerHTML =
         '<div class="result-header">' +
@@ -926,7 +934,7 @@
         `<div class="function-name">${escapeHtml(resultTitle(result, file, line))}</div>` +
         (context ? `<div class="result-context">${escapeHtml(context)}</div>` : '') +
         '</div>' +
-        (result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="Match score">${score}%</span>`) +
+        (result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="${scoreTitle}">${score}</span>`) +
         '</div>';
 
       const openPrimaryDiff = () => {

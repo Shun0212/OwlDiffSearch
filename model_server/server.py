@@ -176,6 +176,14 @@ def path_allowed_by_globs(file_path: str, directory: str, include_globs: Optiona
     return True
 
 
+def build_cosine_index(embeddings: np.ndarray) -> faiss.IndexFlatIP:
+    """Unit-length vectors make FAISS inner products equal cosine similarity."""
+    faiss.normalize_L2(embeddings)
+    index = faiss.IndexFlatIP(embeddings.shape[1])
+    index.add(embeddings)
+    return index
+
+
 class DiffSearchState:
     def __init__(self):
         self.signature: str = ""
@@ -186,7 +194,7 @@ class DiffSearchState:
         self.units: list[dict] = []
         self.file_count: int = 0
         self.embeddings: Optional[np.ndarray] = None
-        self.faiss_index: Optional[faiss.IndexFlatL2] = None
+        self.faiss_index: Optional[faiss.IndexFlatIP] = None
         self.last_prepared: float = 0.0
         self.index_embedding_ms: float = 0.0
         self.hunk_build_ms: float = 0.0
@@ -239,10 +247,18 @@ class DiffSearchState:
                 return False
             if faiss_index.ntotal != len(self.units) or faiss_index.d != embeddings.shape[1]:
                 return False
+            # Older snapshots contain the same embeddings in an L2 index.
+            # Upgrade only the index, without running the embedding model again.
+            migrate_index = faiss_index.metric_type != faiss.METRIC_INNER_PRODUCT
+            if migrate_index:
+                embeddings = np.ascontiguousarray(embeddings, dtype=np.float32)
+                faiss_index = build_cosine_index(embeddings)
             self.embeddings = embeddings
             self.faiss_index = faiss_index
             self.embedding_signature = embedding_signature
             self.index_embedding_ms = 0.0
+            if migrate_index:
+                self.save_embeddings(embedding_signature)
             return True
         except (OSError, ValueError, TypeError, json.JSONDecodeError, RuntimeError):
             return False
@@ -1101,8 +1117,7 @@ def prepare_diff_search_index(
                 vectors = {**cached_vectors, **computed}
                 embeddings = np.asarray([vectors[key] for key in unit_hashes], dtype=np.float32)
                 index_embedding_ms = (time.perf_counter() - start) * 1000
-                faiss_index = faiss.IndexFlatL2(embeddings.shape[1])
-                faiss_index.add(embeddings)
+                faiss_index = build_cosine_index(embeddings)
                 diff_search_state.embeddings = embeddings
                 diff_search_state.faiss_index = faiss_index
                 diff_search_state.embedding_signature = emb_signature
@@ -1254,24 +1269,16 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
     if search_mode in {"semantic", "hybrid"}:
         progress.raise_if_cancelled()
         query_emb = encode_code([req.query], batch_size=1, show_progress=False, input_type="query")
+        query_emb = np.ascontiguousarray(query_emb, dtype=np.float32)
+        faiss.normalize_L2(query_emb)
         semantic_k = len(units)
-        D, I = diff_search_state.faiss_index.search(query_emb, semantic_k)
-        valid_distances = [
-            float(distance)
-            for distance, idx in zip(D[0], I[0])
-            if 0 <= idx < len(units) and np.isfinite(distance)
-        ]
-        min_distance = min(valid_distances) if valid_distances else 0.0
-        max_distance = max(valid_distances) if valid_distances else 0.0
-        for distance, idx in zip(D[0], I[0]):
-            if 0 <= idx < len(units):
-                distance_value = float(distance)
-                if max_distance > min_distance and np.isfinite(distance_value):
-                    score = max(0.0, min(1.0, 1.0 - ((distance_value - min_distance) / (max_distance - min_distance))))
-                else:
-                    score = 1.0
+        similarities, indices = diff_search_state.faiss_index.search(query_emb, semantic_k)
+        for similarity, idx in zip(similarities[0], indices[0]):
+            if 0 <= idx < len(units) and np.isfinite(similarity):
+                # Clamp floating-point roundoff only; no candidate-set rescaling.
+                score = max(-1.0, min(1.0, float(similarity)))
                 semantic_scores[int(idx)] = score
-                semantic_distances[int(idx)] = distance_value
+                semantic_distances[int(idx)] = 1.0 - score
 
     if search_mode in {"bm25", "hybrid"}:
         raw_bm25 = bm25_search_scores(units, req.query)
@@ -1311,7 +1318,10 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
             score,
             semantic_score,
             bm25_score,
-            extra={"distance": semantic_distances.get(unit_index)},
+            extra={
+                "distance": semantic_distances.get(unit_index),
+                "distance_metric": "cosine" if unit_index in semantic_scores else None,
+            },
         ))
     if search_target == "diff_branches":
         found = group_branch_results(found, req.top_k)

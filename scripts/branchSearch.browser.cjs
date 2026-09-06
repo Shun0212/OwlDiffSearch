@@ -219,6 +219,26 @@ async function main() {
     await page.getByRole('button', { name: 'Search', exact: true }).click();
     await page.getByRole('button', { name: 'Open Diff', exact: true }).click();
     assert.equal(await page.evaluate(() => window.testMessages.at(-1).command), 'openDiff');
+
+    for (const [mode, value, label, title] of [
+      ['semantic', 0.8234, '0.823', 'Cosine similarity'],
+      ['semantic', 0, '0.000', 'Cosine similarity'],
+      ['hybrid', -0.12, '-0.120', 'Hybrid score'],
+      ['bm25', 0.4, '40%', 'Normalized BM25 score'],
+      ['semantic', -0.625, '-0.625', 'Cosine similarity'],
+    ]) {
+      await page.evaluate(({ result, mode, value }) => {
+        window.testSearchResults = [{
+          ...result, symbol_kind: 'diff_hunk', commit_hunks: [], keyword_match: false,
+          search_mode: mode, score: value, hybrid_score: value, similarity: value,
+        }];
+      }, { result: commitResult, mode, value });
+      await page.getByRole('button', { name: 'Search', exact: true }).click();
+      await page.waitForFunction((expected) => document.querySelector('.score-badge')?.textContent === expected, label);
+      assert.equal(await page.locator('.score-badge').getAttribute('title'), title);
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    }
+    await page.screenshot({ path: path.join(artifacts, 'cosine-score-280.png'), fullPage: true });
     await page.evaluate(() => { delete window.testSearchResults; });
 
     await page.getByRole('button', { name: 'Branches', exact: true }).click();

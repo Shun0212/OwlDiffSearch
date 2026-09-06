@@ -96,7 +96,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
             self.assertIn("feature.py", merge_patch)
             self.assertIn("+enabled = True", merge_patch)
 
-    def test_saved_faiss_embeddings_are_reused_without_encoding(self):
+    def test_legacy_l2_index_is_migrated_without_encoding(self):
         units = [
             {"search_text": "@@ -1 +1 @@\n-old\n+new"},
             {"search_text": "@@ -5 +5 @@\n-false\n+true"},
@@ -122,6 +122,18 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
 
             np.testing.assert_array_equal(restored.embeddings, embeddings)
             self.assertEqual(restored.faiss_index.ntotal, 2)
+            self.assertEqual(restored.faiss_index.metric_type, faiss.METRIC_INNER_PRODUCT)
+            scores, indices = restored.faiss_index.search(embeddings[:1], 2)
+            np.testing.assert_array_equal(indices, [[0, 1]])
+            np.testing.assert_array_equal(scores, [[1.0, 0.0]])
+
+            # The converted snapshot is persisted and loads directly next time.
+            with (
+                patch.object(server, "encode_code", side_effect=AssertionError("embedding recomputed")),
+                patch.object(server, "build_cosine_index", side_effect=AssertionError("index rebuilt")),
+            ):
+                self.assertTrue(restored.load_embeddings(embedding_signature))
+            self.assertEqual(restored.faiss_index.metric_type, faiss.METRIC_INNER_PRODUCT)
 
             restored.units.reverse()
             self.assertFalse(restored.load_embeddings(embedding_signature))
@@ -235,7 +247,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
             dtype=np.float32,
         )
         state.embeddings = document_embeddings
-        state.faiss_index = faiss.IndexFlatL2(2)
+        state.faiss_index = faiss.IndexFlatIP(2)
         state.faiss_index.add(document_embeddings)
 
         prepared = {
@@ -264,6 +276,7 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
         self.assertEqual([result["commit_hash"] for result in response["results"]], ["commit-a", "commit-b"])
         self.assertEqual(response["results"][0]["scored_file_path"], "best.py")
         self.assertEqual(response["results"][0]["score"], 1.0)
+        self.assertAlmostEqual(response["results"][1]["score"], 0.8)
         self.assertEqual(response["results"][0]["commit_score_aggregation"], "max_file")
         self.assertEqual(
             [entry["path"] for entry in response["results"][0]["commit_hunks"] if entry["is_representative"]],
