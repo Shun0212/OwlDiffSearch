@@ -871,7 +871,7 @@
     if (result.symbol_kind === 'diff_commit') {
       return result.commit_subject || result.function_name || result.name || 'Working tree changes';
     }
-    if (result.symbol_kind === 'diff_hunk') return `${relativePath(file) || 'Diff hunk'}:${line}`;
+    if (result.symbol_kind === 'diff_hunk') return `${relativePath(result.path || file) || 'Diff hunk'}:${line}`;
     const name = result.function_name || result.name || 'Changed function';
     return result.class_name ? `${result.class_name}.${name}` : name;
   }
