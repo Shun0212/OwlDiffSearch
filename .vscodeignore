@@ -24,3 +24,5 @@ model_server/tests/
 CHANGELOG.md
 .github/**
 scripts/**
+
+model_server/**

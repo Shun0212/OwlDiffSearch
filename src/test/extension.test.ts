@@ -2,6 +2,7 @@ import * as assert from 'assert';
 import * as vscode from 'vscode';
 import { buildGitShowUri, openCommitDiff } from '../commitDiffEditor';
 import { createCommitDiffFixture } from './commitDiffFixture';
+import { MODEL_PROFILES } from '../nodeSearch/models';
 import {
     buildCommitUrl,
     formatDiffRange,
@@ -27,7 +28,8 @@ suite('OwlDiffSearch', () => {
             'owlDiffSearch.cancelEmbedding',
             'owlDiffSearch.setupEnv',
             'owlDiffSearch.clearCache',
-            'owlDiffSearch.removeVenv',
+            'owlDiffSearch.prepareModel',
+            'owlDiffSearch.stopEngine',
         ];
         expected.forEach((command) => assert.ok(commands.includes(command), `${command} not found`));
         assert.ok(!commands.includes('owlDiffSearch.findSimilarSelection'));
@@ -39,6 +41,73 @@ suite('OwlDiffSearch', () => {
             parseGlobPatterns('src/**, .py\n./packages/api/**'),
             ['src/**', '*.py', 'packages/api/**'],
         );
+    });
+
+    test('searches through the extension API without a Python environment or HTTP server', async function () {
+        this.timeout(20000);
+        const extension = vscode.extensions.getExtension('owl-diff-search-local.owl-diff-search')!;
+        const api = await extension.activate();
+        const fixture = createCommitDiffFixture();
+        try {
+            const result = await api.search({ directory: fixture.repo, query: 'timeout', search_mode: 'keyword',
+                search_target: 'diff_commits', recent_commit_limit: 100 });
+            assert.strictEqual(result.backend, 'node-onnx');
+            assert.strictEqual(result.num_new_embeddings, 0);
+            assert.ok(result.results.some((item: { commit_hash: string }) => item.commit_hash === fixture.hash));
+            await vscode.commands.executeCommand('owlDiffSearch.stopEngine');
+            const restarted = await api.search({ directory: fixture.repo, query: 'timeout', search_mode: 'bm25', recent_commit_limit: 100 });
+            assert.ok(restarted.results.length > 0);
+        } finally {
+            await vscode.commands.executeCommand('owlDiffSearch.stopEngine');
+            fixture.dispose();
+        }
+    });
+
+    test('runs real ONNX inference inside the VS Code extension worker', async function () {
+        if (process.env.OWL_ONNX_TEST !== '1') { this.skip(); }
+        this.timeout(60000);
+        const api = await vscode.extensions.getExtension('owl-diff-search-local.owl-diff-search')!.activate();
+        const fixture = createCommitDiffFixture();
+        const config = vscode.workspace.getConfiguration('owlDiffSearch');
+        const previousModel = config.inspect<string>('modelName')?.globalValue;
+        try {
+            for (const model of MODEL_PROFILES) {
+                await config.update('modelName', model.id, vscode.ConfigurationTarget.Global);
+                const result = await api.search({ directory: fixture.repo, query: 'increase the request timeout',
+                    search_mode: 'semantic', search_target: 'diff_commits', diff_base_ref: fixture.parent, diff_head_ref: fixture.hash });
+                assert.strictEqual(result.backend, 'node-onnx');
+                assert.strictEqual(result.embedding_dimensions, model.dimensions);
+                assert.strictEqual(result.model_revision, model.revision);
+                assert.strictEqual(result.results.length, 1);
+                assert.strictEqual(result.results[0].scored_file_path, fixture.preferredFile);
+                assert.ok(Number.isFinite(result.results[0].score));
+                assert.strictEqual(result.results[0].distance_metric, 'cosine');
+            }
+        } finally {
+            await config.update('modelName', previousModel, vscode.ConfigurationTarget.Global);
+            await vscode.commands.executeCommand('owlDiffSearch.stopEngine');
+            fixture.dispose();
+        }
+    });
+
+    test('applies saved ONNX precision settings to the next worker', async function () {
+        this.timeout(20000);
+        const api = await vscode.extensions.getExtension('owl-diff-search-local.owl-diff-search')!.activate();
+        const fixture = createCommitDiffFixture();
+        const config = vscode.workspace.getConfiguration('owlDiffSearch');
+        const previous = config.inspect<string>('onnxDtype')?.globalValue;
+        try {
+            for (const dtype of ['fp32', 'q8']) {
+                await config.update('onnxDtype', dtype, vscode.ConfigurationTarget.Global);
+                const result = await api.search({ directory: fixture.repo, query: 'timeout', search_mode: 'keyword', recent_commit_limit: 100 });
+                assert.strictEqual(result.model_dtype, dtype);
+                assert.strictEqual(vscode.workspace.getConfiguration('owlDiffSearch').get('onnxDtype'), dtype);
+            }
+        } finally {
+            await config.update('onnxDtype', previous, vscode.ConfigurationTarget.Global);
+            await vscode.commands.executeCommand('owlDiffSearch.stopEngine');
+            fixture.dispose();
+        }
     });
 
     test('opens all commit files in one native diff tab with readable revision content', async function () {

@@ -15,6 +15,8 @@
   let translationRequestId = 0;
   let progressWasActive = false;
   let searchInFlight = false;
+  let engineBusy = false;
+  let modelSettingsSaving = false;
   let branchBaseRef = '';
   let searchSequence = 0;
   let activeSearchRequestId = null;
@@ -23,12 +25,15 @@
   const byId = (id) => document.getElementById(id);
 
   function updateSearchAvailability() {
-    const busy = searchInFlight || activePrepareRequestId !== null;
+    const busy = modelSettingsSaving || engineBusy || searchInFlight || activePrepareRequestId !== null;
     if (byId('searchBtn')) byId('searchBtn').disabled = busy;
     if (byId('refreshDiffSearchBtn')) byId('refreshDiffSearchBtn').disabled = busy;
+    if (byId('onnxDtypeSelect')) byId('onnxDtypeSelect').disabled = busy;
+    if (byId('embeddingModelSelect')) byId('embeddingModelSelect').disabled = busy;
   }
 
   function invalidateSearch() {
+    if (searchInFlight || activePrepareRequestId !== null) vscode.postMessage({ command: 'cancelEmbedding', silent: true });
     activeSearchRequestId = null;
     activePrepareRequestId = null;
     searchInFlight = false;
@@ -244,14 +249,14 @@
     const text = byId('serverStatusText');
     status?.classList.toggle('online', Boolean(online));
     status?.classList.toggle('offline', !online);
-    if (text) text.textContent = online ? `Online${detail ? ` (${detail})` : ''}` : 'Offline';
+    if (text) text.textContent = online ? 'Ready' : 'Stopped';
     if (!online && progressWasActive) {
       progressWasActive = false;
       searchInFlight = false;
       activeSearchRequestId = null;
       activePrepareRequestId = null;
       updateSearchAvailability();
-      setStatus('Server stopped before embedding completed.', false);
+      setStatus('Search engine stopped before embedding completed.', false);
     }
   }
 
@@ -276,7 +281,7 @@
   }
 
   function applyIndexProgress(progress) {
-    if (!searchInFlight && activePrepareRequestId === null) return;
+    if (!engineBusy && !searchInFlight && activePrepareRequestId === null) return;
     const cancel = byId('cancelEmbeddingBtn');
     if (!progress?.active || !progress.total) {
       if (progressWasActive) {
@@ -772,7 +777,7 @@
   }
 
   function requestPrepareDiff() {
-    if (searchInFlight || activePrepareRequestId !== null) return;
+    if (modelSettingsSaving || engineBusy || searchInFlight || activePrepareRequestId !== null) return;
     activePrepareRequestId = `${sessionId}:prepare:${++searchSequence}`;
     updateSearchAvailability();
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
@@ -799,7 +804,7 @@
   }
 
   function runSearch() {
-    if (searchInFlight || activePrepareRequestId !== null) return;
+    if (modelSettingsSaving || engineBusy || searchInFlight || activePrepareRequestId !== null) return;
     const query = byId('searchInput')?.value.trim() || '';
     if (!query) {
       setStatus('Enter a query first.', false);
@@ -1048,8 +1053,14 @@
 
   function bindEvents() {
     bindSegmentedControls();
-    byId('setupAndStartBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'setupAndStart' }));
-    byId('stopServerBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'stopServer' }));
+    const saveModelSettings = () => {
+      invalidateSearch();
+      modelSettingsSaving = true;
+      updateSearchAvailability();
+      vscode.postMessage({ command: 'updateModelSettings', dtype: byId('onnxDtypeSelect').value, modelName: byId('embeddingModelSelect').value });
+    };
+    byId('onnxDtypeSelect')?.addEventListener('change', saveModelSettings);
+    byId('embeddingModelSelect')?.addEventListener('change', saveModelSettings);
     byId('cancelEmbeddingBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'cancelEmbedding' }));
     byId('searchBtn')?.addEventListener('click', runSearch);
     byId('searchInput')?.addEventListener('keydown', (event) => {
@@ -1161,6 +1172,28 @@
       updateTranslationSummary();
       return;
     }
+    if (message.type === 'modelSettings') {
+      modelSettingsSaving = false;
+      const modelSelect = byId('embeddingModelSelect');
+      if (modelSelect && message.modelName) {
+        if (!Array.from(modelSelect.options).some(option => option.value === message.modelName)) {
+          const custom = document.createElement('option');
+          custom.value = message.modelName;
+          custom.textContent = message.modelName;
+          modelSelect.appendChild(custom);
+        }
+        modelSelect.value = message.modelName;
+      }
+      if (byId('onnxDtypeSelect')) byId('onnxDtypeSelect').value = message.dtype === 'fp32' ? 'fp32' : 'q8';
+      const selected = modelSelect?.selectedOptions[0];
+      for (const [dtype, label, attribute] of [['q8', 'INT8 — Quantized', 'q8Mb'], ['fp32', 'FP32 — Full precision', 'fp32Mb']]) {
+        const option = byId('onnxDtypeSelect')?.querySelector(`option[value="${dtype}"]`);
+        if (option) option.textContent = `${label}${selected?.dataset[attribute] ? ` (${selected.dataset[attribute]} MB)` : ''}`;
+      }
+      updateSearchAvailability();
+      if (message.error) setStatus(message.error, false);
+      return;
+    }
     if (message.type === 'translatedQuery') {
       const translated = byId('translatedQuery');
       if (!translated) return;
@@ -1174,6 +1207,20 @@
     }
     if (message.type === 'serverStatus') {
       setServerStatus(message.online, message.port || '');
+      return;
+    }
+    if (message.type === 'engineActivity') {
+      engineBusy = Boolean(message.busy);
+      updateSearchAvailability();
+      return;
+    }
+    if (message.type === 'searchCancelled') {
+      searchInFlight = false;
+      progressWasActive = false;
+      activeSearchRequestId = null;
+      activePrepareRequestId = null;
+      updateSearchAvailability();
+      setStatus('Search cancelled.', false);
       return;
     }
     if (message.type === 'indexProgress') {
@@ -1261,4 +1308,5 @@
   vscode.postMessage({ command: 'requestInitState' });
   vscode.postMessage({ command: 'requestTranslationSettings' });
   vscode.postMessage({ command: 'checkServerStatus' });
+  vscode.postMessage({ command: 'requestModelSettings' });
 })();

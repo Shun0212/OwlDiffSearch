@@ -9,18 +9,22 @@ const { chromium } = require(process.env.OWL_PLAYWRIGHT_MODULE || 'playwright');
 const { buildDiffSearchWebviewHtml } = require('../out/webviewHtml.js');
 
 const root = path.resolve(__dirname, '..');
-const fixtureOutput = execFileSync(path.join(root, 'model_server/.venv/bin/python'), ['-B', '-c', `
-import json
-from tests.test_branch_search import BranchSearchTests
-case = BranchSearchTests()
-case.setUp()
-try:
-    result = case.search()
-    print('FIXTURE:' + json.dumps(result))
-finally:
-    case.doCleanups()
-`], { cwd: path.join(root, 'model_server'), encoding: 'utf8' });
-const fixture = JSON.parse(fixtureOutput.split('\n').find((line) => line.startsWith('FIXTURE:')).slice(8));
+async function createFixture() {
+  const { SearchEngine } = require('../out/nodeSearch/engine');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'owl-node-browser-fixture-'));
+  const git = (...args) => execFileSync('git', args, { cwd: directory, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  const commit = (file, text, subject) => { fs.writeFileSync(path.join(directory, file), text); git('add', file); git('commit', '-m', subject); };
+  try {
+    git('init', '-b', 'main'); git('config', 'user.email', 'test@example.invalid'); git('config', 'user.name', 'UI test');
+    commit('common.py', 'shared_baseline = True\n', 'Common baseline');
+    git('checkout', '-b', 'feature/auth');
+    commit('auth.py', 'retry_authentication = True\n', 'Retry failed authentication');
+    git('branch', 'feature/shared'); git('checkout', '-b', 'feature/cache', 'main');
+    commit('cache.py', 'cache_responses = True\n', 'Cache responses'); git('checkout', 'main');
+    const engine = new SearchEngine({ cacheDir: path.join(directory, 'cache'), modelName: '', revision: '', dtype: 'q8', batchSize: 2 });
+    return await engine.run('search', { directory, query: 'retry_authentication', search_target: 'diff_branches', search_mode: 'keyword' });
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+}
 const artifacts = fs.mkdtempSync(path.join(os.tmpdir(), 'owl-branch-ui-'));
 const graphFixture = [
   {
@@ -40,6 +44,7 @@ const graphFixture = [
 ];
 
 async function main() {
+  const fixture = await createFixture();
   let origin;
   const server = http.createServer((req, res) => {
     if (req.url === '/') {
@@ -89,6 +94,11 @@ async function main() {
           if (message.command === 'getGitCommits') reply = {
             type: 'gitCommits', commits: graphFixture, hasMore: false, requestId: message.requestId,
           };
+          if (message.command === 'requestModelSettings') reply = { type: 'modelSettings', dtype: window.testDtype || 'q8', modelName: window.testModel || 'Shuu12121/NightOwl-CodeEmbedding' };
+          if (message.command === 'updateModelSettings') {
+            window.testDtype = message.dtype; window.testModel = message.modelName;
+            reply = { type: 'modelSettings', dtype: message.dtype, modelName: message.modelName };
+          }
           if (message.command === 'checkServerStatus') reply = { type: 'serverStatus', online: true };
           if (reply) setTimeout(() => window.dispatchEvent(new MessageEvent('message', { data: reply })), 0);
         },
@@ -97,6 +107,29 @@ async function main() {
     await page.goto(origin);
     assert.equal(await page.title(), 'OwlDiffSearch');
     assert.equal(await page.locator('.brand-title').innerText(), 'OwlDiffSearch');
+    assert.equal(await page.locator('#setupAndStartBtn, #stopServerBtn').count(), 0);
+    await page.locator('#searchSettingsPanel > summary').click();
+    assert.equal(await page.locator('#onnxDtypeSelect').inputValue(), 'q8');
+    await page.locator('#onnxDtypeSelect').selectOption('fp32');
+    await page.waitForFunction(() => !document.querySelector('#onnxDtypeSelect').disabled);
+    assert.equal(await page.evaluate(() => window.testMessages.filter(m => m.command === 'updateModelSettings').at(-1).dtype), 'fp32');
+    await page.locator('#onnxDtypeSelect').selectOption('q8');
+    await page.waitForFunction(() => !document.querySelector('#onnxDtypeSelect').disabled);
+    assert.equal(await page.locator('#onnxDtypeSelect').inputValue(), 'q8');
+    await page.screenshot({ path: path.join(artifacts, 'onnx-settings.png'), fullPage: true });
+    await page.locator('#embeddingModelSelect').selectOption('Shuu12121/NightOwl-CodeEmbedding-35M');
+    await page.waitForFunction(() => !document.querySelector('#embeddingModelSelect').disabled);
+    assert.match(await page.locator('#onnxDtypeSelect option[value="q8"]').innerText(), /35 MB/);
+    assert.match(await page.locator('#onnxDtypeSelect option[value="fp32"]').innerText(), /137 MB/);
+    assert.equal(await page.evaluate(() => window.testMessages.filter(m => m.command === 'updateModelSettings').at(-1).modelName), 'Shuu12121/NightOwl-CodeEmbedding-35M');
+    await page.setViewportSize({ width: 280, height: 900 });
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+    await page.screenshot({ path: path.join(artifacts, 'onnx-35m-settings.png'), fullPage: true });
+    await page.locator('#embeddingModelSelect').selectOption('Shuu12121/NightOwl-CodeEmbedding');
+    await page.waitForFunction(() => !document.querySelector('#embeddingModelSelect').disabled);
+    assert.match(await page.locator('#onnxDtypeSelect option[value="q8"]').innerText(), /152 MB/);
+    await page.setViewportSize({ width: 360, height: 900 });
+    await page.locator('#searchSettingsPanel > summary').click();
     const currentRow = page.locator(`.commit-row[data-hash="${graphFixture[0].hash}"]`);
     const previousRow = page.locator(`.commit-row[data-hash="${graphFixture[1].hash}"]`);
     await currentRow.waitFor();

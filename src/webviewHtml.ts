@@ -1,3 +1,5 @@
+import { MODEL_PROFILES } from './nodeSearch/models';
+
 type WebviewHtmlOptions = {
 	cspSource: string;
 	nonce: string;
@@ -50,16 +52,11 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
         <div class="brand-subtitle">Search only what changed</div>
       </div>
     </div>
-    <span class="server-status offline" id="serverStatus">
+    <span class="server-status online" id="serverStatus">
       <span class="status-dot"></span>
-      <span id="serverStatusText">Offline</span>
+      <span id="serverStatusText">Ready</span>
     </span>
   </header>
-
-  <div class="actions server-actions">
-    <button id="setupAndStartBtn">Setup / Start</button>
-    <button id="stopServerBtn" class="danger-action">Stop</button>
-  </div>
 
   <main>
     <div class="search-unit-toolbar">
@@ -120,6 +117,20 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                 <option value="keyword">Keyword</option>
               </select>
             </div>
+            <label class="option-row stacked-row" for="embeddingModelSelect">
+              <span>Embedding model</span>
+              <select id="embeddingModelSelect">
+                ${MODEL_PROFILES.map(model => `<option value="${model.id}" data-q8-mb="${model.sizeMB.q8}" data-fp32-mb="${model.sizeMB.fp32}">${model.label}</option>`).join('\n')}
+              </select>
+            </label>
+            <label class="option-row stacked-row" for="onnxDtypeSelect">
+              <span>Model precision</span>
+              <select id="onnxDtypeSelect" aria-describedby="onnxDtypeHint">
+                <option value="q8" selected>INT8 — Quantized (152 MB)</option>
+                <option value="fp32">FP32 — Full precision (604 MB)</option>
+              </select>
+            </label>
+            <div class="filter-note" id="onnxDtypeHint">INT8 uses less memory. The selected model downloads automatically on the next semantic search.</div>
           </section>
 
           <section class="settings-group target-filter-body" aria-labelledby="targetFilterHeading">

@@ -7,7 +7,7 @@ const styles = fs.readFileSync(path.join(__dirname, '..', 'media', 'styles.css')
 const script = fs.readFileSync(path.join(__dirname, '..', 'media', 'main.js'), 'utf8');
 const htmlBuilder = fs.readFileSync(path.join(__dirname, '..', 'src', 'webviewHtml.ts'), 'utf8');
 const extension = fs.readFileSync(path.join(__dirname, '..', 'src', 'extension.ts'), 'utf8');
-const modelBackend = fs.readFileSync(path.join(__dirname, '..', 'model_server', 'model.py'), 'utf8');
+const modelBackend = fs.readFileSync(path.join(__dirname, '..', 'src', 'nodeSearch', 'embedding.ts'), 'utf8');
 
 function declarationBlock(selector) {
   const escapedSelector = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -83,8 +83,8 @@ test('renders determinate embedding progress from the start of the track', () =>
   assert.match(script, /status\.dataset\.view !== 'index-progress'/);
   assert.match(script, /progressBar\.style\.width = `\$\{percent\}%`/);
   assert.match(script, /!\/\^Loading\\b\/i\.test\(progressPhase\)/);
-  assert.match(modelBackend, /progress\.start\("Loading embedding model"/);
-  assert.match(script, /Server stopped before embedding completed/);
+  assert.match(modelBackend, /phase: 'Loading ONNX model'/);
+  assert.match(script, /Search engine stopped before embedding completed/);
 });
 
 test('keeps the standalone UI English-first with hunk and commit diff units', () => {

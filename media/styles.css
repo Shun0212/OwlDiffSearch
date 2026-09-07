@@ -117,31 +117,6 @@ summary:focus-visible {
   color: var(--vscode-errorForeground, #cf222e);
 }
 
-.actions {
-  display: flex;
-  gap: 0.5em;
-  padding: 0.55em 0.8em;
-  border-bottom: 1px solid var(--vscode-sideBarSectionHeader-border, #3c3c3c);
-}
-
-.actions button {
-  flex: 1;
-}
-
-#setupAndStartBtn {
-  flex: 1.35;
-}
-
-#stopServerBtn {
-  border-color: rgba(207, 34, 46, 0.65);
-  background: var(--vscode-errorForeground, #cf222e);
-  color: #ffffff;
-}
-
-#stopServerBtn:hover {
-  background: #a40e18;
-}
-
 .diff-only {
   min-width: 240px;
 }
