@@ -12,7 +12,8 @@ export function createCommitDiffFixture() {
 	git('config', 'user.email', 'diff-test@example.invalid');
 	git('config', 'commit.gpgsign', 'false');
 	git('config', 'core.hooksPath', '/dev/null');
-	const preferredFile = 'matched #?.py';
+	const preferredFile = process.platform === 'win32' ? 'matched #%.py' : 'matched #?.py';
+	const unicodeFile = process.platform === 'win32' ? 'space 日本語.txt' : 'tab\t日本語.txt';
 	write(preferredFile, 'timeout = 1\n');
 	write('remove.txt', 'removed content\n');
 	write('old name.txt', 'renamed content\n');
@@ -25,9 +26,9 @@ export function createCommitDiffFixture() {
 	fs.unlinkSync(path.join(repo, 'remove.txt'));
 	fs.renameSync(path.join(repo, 'old name.txt'), path.join(repo, 'new name.txt'));
 	write('added.txt', 'added content\n');
-	write('tab\t日本語.txt', 'non-ASCII filename\n');
+	write(unicodeFile, 'non-ASCII filename\n');
 	git('add', '-A');
 	git('commit', '-qm', 'Update requests and related files');
 	const hash = git('rev-parse', 'HEAD');
-	return { repo, git, write, parent, hash, preferredFile, dispose: () => fs.rmSync(repo, { recursive: true, force: true }) };
+	return { repo, git, write, parent, hash, preferredFile, unicodeFile, dispose: () => fs.rmSync(repo, { recursive: true, force: true }) };
 }

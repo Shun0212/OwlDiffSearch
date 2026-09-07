@@ -22,7 +22,7 @@ test('loads every changed file from Git and puts the matching file first', async
   assert.deepEqual(commit.files.find((file) => file.newPath === 'added.txt'), {
     status: 'A', oldPath: undefined, newPath: 'added.txt',
   });
-  assert.ok(commit.files.some((file) => file.newPath === 'tab\t日本語.txt'));
+  assert.ok(commit.files.some((file) => file.newPath === fixture.unicodeFile));
   const absoluteMatch = await readCommitChanges(fixture.repo, fixture.hash.slice(0, 9), path.join(fixture.repo, fixture.preferredFile));
   assert.deepEqual(absoluteMatch.files, commit.files);
 });

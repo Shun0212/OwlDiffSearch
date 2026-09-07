@@ -17,6 +17,7 @@ model_server/.env
 **/.env
 **/.env.*
 demo_repositories/**
+demo_results/**
 model_server/tests/
 **/__pycache__
 **/*.pyc

@@ -20,7 +20,7 @@ import numpy as np
 from dotenv import load_dotenv
 from pathspec import PathSpec
 from pathspec.patterns import GitWildMatchPattern
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 import progress
 from branch_search import collect_branch_units, group_branch_results
@@ -73,6 +73,7 @@ class SearchFunctionsSimpleRequest(BaseModel):
     branch_ref: Optional[str] = None
     branch_base_ref: Optional[str] = None
     first_parent: bool = False
+    recent_commit_limit: int = Field(default=0, ge=0, le=10000)
     force_diff_refresh: bool = False
 
 
@@ -90,6 +91,7 @@ class PrepareDiffSearchRequest(BaseModel):
     branch_ref: Optional[str] = None
     branch_base_ref: Optional[str] = None
     first_parent: bool = False
+    recent_commit_limit: int = Field(default=0, ge=0, le=10000)
     force: bool = False
 
 
@@ -476,6 +478,7 @@ def iter_commit_patches(
     base_ref: str,
     head_ref: str,
     first_parent: bool = False,
+    recent_commit_limit: int = 0,
 ) -> list[tuple[dict, str]]:
     """Yield (commit_meta, patch_text) for the selected diff range.
 
@@ -486,9 +489,12 @@ def iter_commit_patches(
     base = sanitize_git_ref(base_ref)
     head = sanitize_git_ref(head_ref)
     empty_meta = {"commit_hash": "", "commit_subject": "", "commit_message": ""}
-    if not base and not head:
+    recent = recent_commit_limit > 0 and not base
+    if not base and not head and not recent:
         return [(empty_meta, git_diff_text(directory, base_ref, head_ref))]
-    if base and head:
+    if recent:
+        rev_range = head or "HEAD"
+    elif base and head:
         rev_range = f"{base}..{head}"
     elif base:
         rev_range = f"{base}..HEAD"
@@ -503,6 +509,8 @@ def iter_commit_patches(
         # Keep the mainline traversal while representing a merged branch as
         # one merge patch against its first parent.
         args.extend(["--first-parent", "--diff-merges=first-parent"])
+    if recent:
+        args.extend(["--date-order", f"--max-count={recent_commit_limit}"])
     args.extend([f"--format={fmt}", rev_range, "--"])
     proc = subprocess.run(
         args, cwd=directory, capture_output=True, encoding="utf-8", errors="replace",
@@ -569,6 +577,7 @@ def diff_signature(
     diff_head_ref: Optional[str],
     branch_ref: Optional[str] = None,
     first_parent: bool = False,
+    recent_commit_limit: int = 0,
 ) -> tuple[str, str, str]:
     root = str(Path(directory).resolve())
     base_ref = sanitize_git_ref(diff_base_ref)
@@ -586,6 +595,8 @@ def diff_signature(
         "branch_ref": selected_branch,
         "first_parent": bool(first_parent),
     }
+    if recent_commit_limit > 0 and not base_ref:
+        payload["recent_commit_limit"] = recent_commit_limit
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest(), base_ref, effective_head_ref
 
 
@@ -608,6 +619,7 @@ def collect_diff_hunks(
     diff_head_ref: Optional[str],
     branch_ref: Optional[str] = None,
     first_parent: bool = False,
+    recent_commit_limit: int = 0,
 ) -> tuple[list[dict], int, str, str]:
     root = Path(directory).resolve()
     if not root.is_dir():
@@ -622,10 +634,11 @@ def collect_diff_hunks(
         diff_head_ref,
         branch_ref,
         first_parent,
+        recent_commit_limit,
     )
     include_file_set = {str(Path(path).resolve()) for path in include_files or []}
     ignore_spec = load_gitignore_spec(str(root))
-    segments = iter_commit_patches(str(root), base_ref, head_ref, first_parent)
+    segments = iter_commit_patches(str(root), base_ref, head_ref, first_parent, recent_commit_limit)
     if not any(patch.strip() for _meta, patch in segments):
         return [], 0, base_ref, head_ref
 
@@ -998,6 +1011,7 @@ def prepare_diff_search_index(
     branch_ref: Optional[str] = None,
     first_parent: bool = False,
     branch_base_ref: Optional[str] = None,
+    recent_commit_limit: int = 0,
 ) -> dict:
     normalized_target = normalize_search_target(search_target)
     # Reading/parsing the patch is cheap compared with embedding it and is
@@ -1023,11 +1037,11 @@ def prepare_diff_search_index(
     else:
         config_signature, base_ref, head_ref = diff_signature(
             directory, file_ext, include_files, include_globs, exclude_globs,
-            diff_base_ref, diff_head_ref, branch_ref, first_parent,
+            diff_base_ref, diff_head_ref, branch_ref, first_parent, recent_commit_limit,
         )
         hunks, file_count, base_ref, head_ref = collect_diff_hunks(
             directory, file_ext, include_files, include_globs, exclude_globs,
-            diff_base_ref, diff_head_ref, branch_ref, first_parent,
+            diff_base_ref, diff_head_ref, branch_ref, first_parent, recent_commit_limit,
         )
         units = (
             build_commit_diff_units(hunks)
@@ -1160,7 +1174,11 @@ def prepare_diff_search_index(
         "diff_embedding_cache_source": embedding_cache_source,
         "num_reused_embeddings": reused_embedding_count,
         "num_new_embeddings": new_embedding_count,
-        "diff_compare": f"Changes not in {base_ref}" if normalized_target == "diff_branches" else display_diff_compare(base_ref, head_ref),
+        "diff_compare": (
+            f"Changes not in {base_ref}" if normalized_target == "diff_branches"
+            else f"Latest {recent_commit_limit} commits → {head_ref or 'HEAD'}" if recent_commit_limit and not base_ref
+            else display_diff_compare(base_ref, head_ref)
+        ),
         "diff_base_ref": base_ref,
         "diff_head_ref": head_ref,
         "branch_ref": "" if normalized_target == "diff_branches" else sanitize_git_ref(branch_ref),
@@ -1193,6 +1211,7 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         req.branch_ref,
         req.first_parent,
         req.branch_base_ref,
+        req.recent_commit_limit,
     )
     units = diff_search_state.units
     needs_embeddings = search_mode in {"semantic", "hybrid"}
@@ -1374,6 +1393,7 @@ async def prepare_diff_search_api(req: PrepareDiffSearchRequest):
         req.branch_ref,
         req.first_parent,
         req.branch_base_ref,
+        req.recent_commit_limit,
     )
     if prepared.get("cancelled"):
         return prepared

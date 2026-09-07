@@ -58,7 +58,7 @@
     if (emptyTitle) emptyTitle.textContent = branches ? 'Find the branch behind a change' : 'Ready to search the diff';
     if (emptyHint) emptyHint.textContent = branches
       ? 'Describe a change, then search to see matching branches and the commits behind them.'
-      : 'Blank refs compare the current commit (HEAD) with the working tree. Choose commits above for branch or commit review.';
+      : 'Search the latest 100 commits by default. Choose From / To in Settings to search a different range.';
     updateSettingsStateSummary();
   }
 
@@ -142,10 +142,16 @@
   function effectiveRangeRefs() {
     const baseInput = shortRef(byId('diffBaseRefInput')?.value || '');
     const headInput = shortRef(commitBranchFilter || byId('diffHeadRefInput')?.value || '');
+    if (recentCommitLimit()) return { base: 'Latest 100 commits', head: headInput || 'HEAD' };
     return {
       base: baseInput || 'HEAD',
       head: headInput || (baseInput ? 'HEAD' : 'working tree'),
     };
+  }
+
+  function recentCommitLimit() {
+    return !isBranchSearch() && byId('blankRangeModeSelect')?.value !== 'working_tree'
+      && !byId('diffBaseRefInput')?.value.trim() ? 100 : 0;
   }
 
   function updateRange() {
@@ -174,6 +180,7 @@
       excludeDocumentation: Boolean(byId('excludeDocumentationToggle')?.checked),
       diffBaseRef: byId('diffBaseRefInput')?.value || '',
       diffHeadRef: byId('diffHeadRefInput')?.value || '',
+      blankRangeMode: byId('blankRangeModeSelect')?.value || 'recent',
       commitBranchFilter,
       commitBranchLimit,
       commitTraversal,
@@ -197,6 +204,7 @@
       ['excludePatternsInput', 'excludePatterns'],
       ['diffBaseRefInput', 'diffBaseRef'],
       ['diffHeadRefInput', 'diffHeadRef'],
+      ['blankRangeModeSelect', 'blankRangeMode'],
     ];
     fields.forEach(([id, key]) => {
       const element = byId(id);
@@ -380,7 +388,7 @@
     });
   }
 
-  const COMMIT_PAGE_SIZE = 200;
+  const COMMIT_PAGE_SIZE = 100;
 
   function updateTreeFilterControls() {
     const branchSelect = byId('commitBranchFilterSelect');
@@ -730,7 +738,10 @@
     const { base, head } = effectiveRangeRefs();
     const baseHash = resolveGraphRef(base, commitGraphData);
     const headHash = resolveGraphRef(head, commitGraphData);
-    const rangeHashes = computeRangeCommitHashes(baseHash, headHash, commitGraphData);
+    const ancestors = collectVisibleAncestors(headHash, new Map(commitGraphData.map((commit) => [commit.hash, commit])));
+    const rangeHashes = recentCommitLimit()
+      ? new Set(commitGraphData.filter((commit) => ancestors.has(commit.hash)).slice(0, 100).map((commit) => commit.hash))
+      : computeRangeCommitHashes(baseHash, headHash, commitGraphData);
     document.querySelectorAll('#commitGraph .commit-row').forEach((row) => {
       const hash = row.getAttribute('data-hash') || '';
       row.classList.toggle('is-in-range', rangeHashes.has(hash));
@@ -752,7 +763,7 @@
     });
     const legend = byId('commitRangeLegend');
     if (!legend) return;
-    const hasCommitRange = Boolean(baseHash && headHash);
+    const hasCommitRange = Boolean((baseHash || recentCommitLimit()) && headHash);
     legend.hidden = !hasCommitRange;
     if (hasCommitRange) {
       const count = rangeHashes.size;
@@ -783,6 +794,7 @@
       branchRef: commitBranchFilter,
       firstParent: commitTraversal === 'first_parent',
       force: false,
+      recentCommitLimit: recentCommitLimit(),
     });
   }
 
@@ -818,6 +830,7 @@
       branchRef: commitBranchFilter,
       firstParent: commitTraversal === 'first_parent',
       translateEnabled: translation.enable,
+      recentCommitLimit: recentCommitLimit(),
       geminiModel: translation.model,
     });
     saveState();
@@ -1087,6 +1100,11 @@
       invalidateSearch();
       branchBaseRef = event.currentTarget.value;
       if (byId('branchSearchSummary')) byId('branchSearchSummary').textContent = '';
+      saveState();
+    });
+    byId('blankRangeModeSelect')?.addEventListener('change', () => {
+      invalidateSearch();
+      updateRange();
       saveState();
     });
     ['diffBaseRefInput', 'diffHeadRefInput'].forEach((id) => {

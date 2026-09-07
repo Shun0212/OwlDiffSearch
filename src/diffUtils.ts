@@ -30,7 +30,7 @@ export type CommitPage = {
 export function normalizeCommitPage(limitValue: unknown, offsetValue: unknown): CommitPage {
 	const requestedLimit = typeof limitValue === 'number' && Number.isFinite(limitValue)
 		? Math.floor(limitValue)
-		: 200;
+		: 100;
 	const requestedOffset = typeof offsetValue === 'number' && Number.isFinite(offsetValue)
 		? Math.floor(offsetValue)
 		: 0;

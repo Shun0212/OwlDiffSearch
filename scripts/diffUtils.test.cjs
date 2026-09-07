@@ -14,7 +14,7 @@ const {
 } = require('../out/diffUtils.js');
 
 test('normalizes commit graph pagination safely', () => {
-  assert.deepEqual(normalizeCommitPage(undefined, undefined), { limit: 200, offset: 0 });
+  assert.deepEqual(normalizeCommitPage(undefined, undefined), { limit: 100, offset: 0 });
   assert.deepEqual(normalizeCommitPage(250, 400), { limit: 250, offset: 400 });
   assert.deepEqual(normalizeCommitPage(5000, -10), { limit: 1000, offset: 0 });
 });

@@ -1194,7 +1194,8 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 								branch_ref: branchRef,
                                                         branch_base_ref: branchBaseRef,
 								first_parent: !!msg.firstParent,
-                                                        force: !!msg.force
+                                                        force: !!msg.force,
+                                                        recent_commit_limit: msg.recentCommitLimit === 100 ? 100 : 0
                                                 })
                                         });
                                         if (!res.ok) {
@@ -1399,6 +1400,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 							diff_head_ref: diffHeadRef,
 							branch_ref: branchRef,
 							first_parent: !!msg.firstParent,
+							recent_commit_limit: msg.recentCommitLimit === 100 ? 100 : 0,
 							branch_base_ref: validateGitRef(msg.branchBaseRef)
 						})
 					});

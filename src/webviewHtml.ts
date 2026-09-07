@@ -146,14 +146,21 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
           <section class="settings-group range-settings-body" aria-labelledby="rangeSettingsHeading">
             <div class="settings-group-heading" id="rangeSettingsHeading">
               <span>Compare range</span>
-              <span class="option-summary" id="rangeSummary">HEAD → working tree</span>
+              <span class="option-summary" id="rangeSummary">Latest 100 commits → HEAD</span>
             </div>
             <div id="diffRangeBar" class="diff-range-bar" aria-label="Active diff range">
               <span class="diff-range-bar-label">Active range</span>
-              <span id="activeBaseRef" class="active-range-ref active-range-base">HEAD</span>
+              <span id="activeBaseRef" class="active-range-ref active-range-base">Latest 100 commits</span>
               <span class="active-range-arrow" aria-hidden="true">→</span>
-              <span id="activeHeadRef" class="active-range-ref active-range-head">working tree</span>
+              <span id="activeHeadRef" class="active-range-ref active-range-head">HEAD</span>
             </div>
+            <label class="commit-branch-picker">
+              <span class="commit-branch-picker-label">When From is blank</span>
+              <select id="blankRangeModeSelect">
+                <option value="recent" selected>Latest 100 commits</option>
+                <option value="working_tree">Working tree / manual range</option>
+              </select>
+            </label>
             <div class="range-editor" aria-label="Compare range endpoints">
               <div class="range-editor-heading">
                 <span>Range endpoints</span>
@@ -163,7 +170,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                 <span class="range-endpoint-badge">FROM</span>
                 <span class="range-endpoint-body">
                   <span class="range-endpoint-title">Start from</span>
-                  <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="baseEndpointHint">
+                  <input id="diffBaseRefInput" type="text" spellcheck="false" placeholder="Latest 100 commits (default)" aria-describedby="baseEndpointHint">
                   <span class="range-endpoint-hint" id="baseEndpointHint">Click a commit below to set From</span>
                 </span>
               </label>
@@ -175,7 +182,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
                 <span class="range-endpoint-badge">TO</span>
                 <span class="range-endpoint-body">
                   <span class="range-endpoint-title">End at</span>
-                  <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="Working tree (default)" aria-describedby="headEndpointHint">
+                  <input id="diffHeadRefInput" type="text" spellcheck="false" placeholder="HEAD (default)" aria-describedby="headEndpointHint">
                   <span class="range-endpoint-hint" id="headEndpointHint">Shift+click a commit below to set To</span>
                 </span>
               </label>
@@ -262,7 +269,7 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <div class="empty-state" id="emptyState">
         <img src="${options.owlPngUri}" alt="" class="empty-owl">
         <div class="empty-title">Ready to search the diff</div>
-        <div class="empty-hint">Blank refs compare the current commit (HEAD) with the working tree.<br>Choose commits above for branch or commit review.</div>
+        <div class="empty-hint">Search the latest 100 commits by default.<br>Choose From / To in Settings to search a different range.</div>
       </div>
     </div>
   </main>
