@@ -10,7 +10,8 @@ import progress
 
 def git_text(directory: str, *args: str) -> str:
     result = subprocess.run(
-        ["git", *args], cwd=directory, capture_output=True, text=True,
+        ["git", *args], cwd=directory, capture_output=True,
+        encoding="utf-8", errors="replace",
     )
     if result.returncode:
         raise ValueError((result.stderr or "Unable to read Git branches.").strip())

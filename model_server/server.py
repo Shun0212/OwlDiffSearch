@@ -355,7 +355,7 @@ def display_diff_compare(base_ref: str, head_ref: str) -> str:
 def git_diff_text(directory: str, base_ref: str, head_ref: str) -> str:
     base = sanitize_git_ref(base_ref)
     head = sanitize_git_ref(head_ref)
-    args = ["git", "diff", "--no-color", "--no-ext-diff", "--unified=3"]
+    args = ["git", "-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "--unified=3"]
     if base and head:
         args.append(f"{base}...{head}")
     elif base:
@@ -365,13 +365,18 @@ def git_diff_text(directory: str, base_ref: str, head_ref: str) -> str:
     else:
         args.append("HEAD")
     args.append("--")
-    proc = subprocess.run(args, cwd=directory, capture_output=True, text=True)
+    # Git output must not use the Windows locale (e.g. cp932). Legacy file
+    # bytes may not be UTF-8; keep the rest of the patch searchable in that case.
+    proc = subprocess.run(
+        args, cwd=directory, capture_output=True, encoding="utf-8", errors="replace",
+    )
     if proc.returncode != 0 and not base:
         fallback = subprocess.run(
-            ["git", "diff", "--no-color", "--no-ext-diff", "--unified=3", "--"],
+            ["git", "-c", "core.quotepath=false", "diff", "--no-color", "--no-ext-diff", "--unified=3", "--"],
             cwd=directory,
             capture_output=True,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         proc = fallback
     if proc.returncode != 0:
@@ -386,17 +391,17 @@ def git_diff_text(directory: str, base_ref: str, head_ref: str) -> str:
 def untracked_files_as_diff(directory: str) -> str:
     try:
         output = subprocess.check_output(
-            ["git", "ls-files", "--others", "--exclude-standard"],
+            ["git", "ls-files", "-z", "--others", "--exclude-standard"],
             cwd=directory,
-            text=True,
+            encoding="utf-8",
+            errors="replace",
             stderr=subprocess.DEVNULL,
         )
     except Exception:
         return ""
     chunks: list[str] = []
     root = Path(directory).resolve()
-    for rel_path in output.splitlines():
-        rel_path = rel_path.strip()
+    for rel_path in output.split("\0"):
         if not rel_path:
             continue
         file_path = (root / rel_path).resolve()
@@ -491,14 +496,17 @@ def iter_commit_patches(
         rev_range = f"HEAD..{head}"
     fmt = f"{_LOG_RECORD_SEP}%H{_LOG_UNIT_SEP}%s{_LOG_UNIT_SEP}%B{_LOG_RECORD_SEP}"
     args = [
-        "git", "log", "-p", "--no-color", "--no-ext-diff", "--unified=3",
+        "git", "-c", "core.quotepath=false", "log", "--encoding=UTF-8",
+        "-p", "--no-color", "--no-ext-diff", "--unified=3",
     ]
     if first_parent:
         # Keep the mainline traversal while representing a merged branch as
         # one merge patch against its first parent.
         args.extend(["--first-parent", "--diff-merges=first-parent"])
     args.extend([f"--format={fmt}", rev_range, "--"])
-    proc = subprocess.run(args, cwd=directory, capture_output=True, text=True)
+    proc = subprocess.run(
+        args, cwd=directory, capture_output=True, encoding="utf-8", errors="replace",
+    )
     if proc.returncode != 0:
         detail = (proc.stderr or proc.stdout or "git log failed").strip()
         raise RuntimeError(detail)

@@ -121,8 +121,26 @@ git clone --depth 50 https://github.com/pallets/flask.git demo_repositories/flas
 
 ## 開発
 
+### クローン後の初回セットアップ
+
+Node.js（npm を含む）、Git、VS Code を事前にインストールしてください。リポジトリをクローンしたら、OwlDiffSearch のフォルダ内で次を実行します。
+
+```powershell
+npm ci --include=dev
+npm run watch
+```
+
+`git clone` だけでは依存関係はインストールされません。`npm ci --include=dev` で `package-lock.json` に従って TypeScript などの開発用パッケージもインストールします。`node_modules` は Git に含めず、このコマンドで復元します。
+
+`Found 0 errors. Watching for file changes.` と表示されれば正常です。`watch` はファイルの変更を監視して再コンパイルし続けます。終了するときは `Ctrl+C` を押します。
+
+VS Code で拡張をデバッグする場合は、依存関係のインストール後に `F5`（`Run Extension`）を実行してください。`watch` タスクが自動で起動するため、手動で `npm run watch` を実行する必要はありません。
+
+`'tsc' は、内部コマンドまたは外部コマンド…として認識されていません` と表示された場合も、リポジトリ直下で `npm ci --include=dev` を実行してから再試行してください。
+
+### ビルド・検証
+
 ```bash
-npm install
 npm run compile
 npm run lint
 npm test
