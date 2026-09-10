@@ -135,7 +135,19 @@
         "owlDiffSearch.geminiApiKey": {
           "type": "string",
           "default": "",
-          "description": "Gemini API key used for query translation and expansion."
+          "description": "Gemini API key used for query translation, expansion and agentic search."
+        },
+        "owlDiffSearch.enableAgenticSearch": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let Gemini review retrieved diff excerpts and iteratively refine queries and search modes. Sends search queries, result titles, paths and diff excerpts to Gemini. Overrides translation and expansion while enabled."
+        },
+        "owlDiffSearch.agenticMaxSearches": {
+          "type": "integer",
+          "default": 3,
+          "minimum": 1,
+          "maximum": 6,
+          "description": "Maximum local searches per agentic run. Gemini is called at most this many times plus one final review and up to two recovery attempts for transient errors or malformed tool responses."
         },
         "owlDiffSearch.geminiModel": {
           "type": "string",

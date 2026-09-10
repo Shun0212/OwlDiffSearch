@@ -21,6 +21,8 @@ import {
     DEFAULT_GEMINI_MODEL, GEMINI_MODELS, normalizeGeminiModel,
     queryRewriteKind, rewriteSearchQuery, QueryRewriteOptions,
 } from './queryExpansion';
+import { runAgenticSearch, normalizeAgentSearchLimit } from './agenticSearch';
+import type { GenerateAgent } from './agenticSearch';
 import { buildGitShowUri, openCommitDiff, OWL_DIFF_SCHEME } from './commitDiffEditor';
 
 const DEFAULT_SERVER_HOST = '127.0.0.1';
@@ -28,6 +30,7 @@ const DEFAULT_SERVER_PORT = 8765;
 const DIFF_SERVER_SERVICE = 'owl-diff-search';
 const ALLOWED_WEBVIEW_COMMANDS = new Set([
 	'cancelEmbedding',
+	'cancelSearch',
 	'checkServerStatus',
 	'getGitBranches',
 	'getGitCommits',
@@ -853,6 +856,8 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 	public static readonly viewType = 'owlDiffSearch.sidebar';
 	private _view?: vscode.WebviewView;
 	private _indexProgressPoll?: NodeJS.Timeout;
+	private _searchController?: AbortController;
+	private _activeSearchRequestId?: string;
 	private readonly _webviewSessionId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 
 	constructor(
@@ -862,6 +867,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 		this._context.subscriptions.push({
 			dispose: () => {
 				this.stopIndexProgressPolling();
+				this._searchController?.abort();
 			}
 		});
 	}
@@ -965,6 +971,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                 webviewView.webview.postMessage({
                         type: 'translationSettings',
                         expand: config.get<boolean>('enableQueryExpansion', false),
+                        agentic: config.get<boolean>('enableAgenticSearch', false),
                         enable: enable,
                         model: geminiModel,
                         models: GEMINI_MODELS
@@ -1004,6 +1011,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                 webviewView.webview.postMessage({
                                         type: 'translationSettings',
                                         expand: config.get<boolean>('enableQueryExpansion', false),
+                                        agentic: config.get<boolean>('enableAgenticSearch', false),
                                         enable,
                                         model: geminiModel,
                                         models: GEMINI_MODELS
@@ -1015,6 +1023,9 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                         const config = vscode.workspace.getConfiguration('owlDiffSearch');
                                         if (typeof msg.enable === 'boolean') {
                                                 await config.update('enableJapaneseTranslation', !!msg.enable, vscode.ConfigurationTarget.Global);
+                                        }
+                                        if (typeof msg.agentic === 'boolean') {
+                                                await config.update('enableAgenticSearch', msg.agentic, vscode.ConfigurationTarget.Global);
                                         }
                                         if (typeof msg.expand === 'boolean') {
                                                 await config.update('enableQueryExpansion', msg.expand, vscode.ConfigurationTarget.Global);
@@ -1031,6 +1042,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
                                         webviewView.webview.postMessage({
                                                 type: 'translationSettings',
                                                 expand: updatedConfig.get<boolean>('enableQueryExpansion', false),
+                                                agentic: updatedConfig.get<boolean>('enableAgenticSearch', false),
                                                 enable,
                                                 model: geminiModel,
                                                 models: GEMINI_MODELS,
@@ -1216,7 +1228,17 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				});
                                 return;
                         }
+                        if (msg.command === 'cancelSearch') {
+                                if (msg.searchRequestId === this._activeSearchRequestId) {
+                                    this._searchController?.abort();
+                                }
+                                return;
+                        }
                         if (msg.command === 'search') {
+				this._searchController?.abort();
+				const searchController = new AbortController();
+				this._searchController = searchController;
+				this._activeSearchRequestId = msg.searchRequestId;
 				const replyToSearch = (payload: Record<string, unknown>) => webviewView.webview.postMessage({ ...payload, searchRequestId: msg.searchRequestId });
 				// サーバー起動チェック
 				const serverUp = await resolveActiveServerPort() !== undefined;
@@ -1236,12 +1258,12 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						return;
 					}
 				}
-                                let query = typeof msg.text === 'string' ? msg.text.trim() : '';
+								let query = typeof msg.text === 'string' ? msg.text.trim() : '';
 				if (!query) {
 					replyToSearch({ type: 'error', message: 'Enter a search query.' });
 					return;
 				}
-                                const fileExt = msg.lang || 'auto';
+								const fileExt = msg.lang || 'auto';
 				const workspaceFolders = vscode.workspace.workspaceFolders;
 				if (!workspaceFolders || workspaceFolders.length === 0) {
 					replyToSearch({ type: 'error', message: 'No workspace folder found' });
@@ -1276,9 +1298,44 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 					embeddingModel: queryConfig.get<string>('modelName', 'Shuu12121/NightOwl-CodeEmbedding'),
 				};
 				const originalQuery = query;
+				const agenticEnabled = typeof msg.agenticEnabled === 'boolean' ? msg.agenticEnabled : queryConfig.get<boolean>('enableAgenticSearch', false);
+				const serverPort = await resolveActiveServerPort();
+				if (searchController.signal.aborted) {
+					return;
+				}
+				if (serverPort === undefined) {
+					replyToSearch({ type: 'error', message: 'Failed to search. Make sure the server is running.' });
+					return;
+				}
+				let branchBaseRef: string;
+				try {
+					branchBaseRef = validateGitRef(msg.branchBaseRef);
+				} catch (error: any) {
+					replyToSearch({ type: 'error', message: error?.message || String(error) });
+					return;
+				}
+				const searchOnce = async (searchQuery: string, mode: string) => {
+					const res = await fetch(getServerUrl('/search_diff', serverPort), {
+						method: 'POST', signal: searchController.signal,
+						headers: { 'Content-Type': 'application/json' },
+						body: JSON.stringify({
+							directory: folderPath, query: searchQuery, search_mode: mode, top_k: 30,
+							file_ext: fileExt, include_globs: includeGlobs, exclude_globs: excludeGlobs,
+							scope: 'changed', search_target: searchTarget,
+							diff_base_ref: diffBaseRef, diff_head_ref: diffHeadRef, branch_ref: branchRef,
+							first_parent: !!msg.firstParent, recent_commit_limit: msg.recentCommitLimit === 100 ? 100 : 0,
+							branch_base_ref: branchBaseRef,
+						}),
+					});
+					const data: any = await res.json();
+					if (!res.ok) {
+						throw new Error(data?.detail || `Search failed with HTTP ${res.status}`);
+					}
+					return data;
+				};
 				const rewriteKind = queryRewriteKind(query, rewriteOptions);
 				let appliedRewrite: string | undefined;
-				if (rewriteKind) {
+				if (rewriteKind && !agenticEnabled) {
 					replyToSearch({ type: 'status', message: rewriteKind === 'expanded' ? 'Expanding query with Gemini...' : 'Translating query with Gemini...' });
 					try {
 						const apiKey = queryConfig.get<string>('geminiApiKey', '');
@@ -1288,45 +1345,59 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						const { GoogleGenAI } = await import('@google/genai');
 						const ai = new GoogleGenAI({ apiKey });
 						const model = normalizeGeminiModel(typeof msg.geminiModel === 'string' ? msg.geminiModel : queryConfig.get<string>('geminiModel', DEFAULT_GEMINI_MODEL));
-						query = await rewriteSearchQuery(query, rewriteOptions, model, request => ai.models.generateContent(request));
+						query = await rewriteSearchQuery(query, rewriteOptions, model, request => ai.models.generateContent({ ...request, config: { ...request.config, abortSignal: searchController.signal } }));
 						appliedRewrite = rewriteKind;
 					} catch {
-						vscode.window.showWarningMessage('Gemini query preparation failed. Check owlDiffSearch.geminiApiKey and the selected model. Searching with the original query.');
+						if (!searchController.signal.aborted) {
+							vscode.window.showWarningMessage('Gemini query preparation failed. Check owlDiffSearch.geminiApiKey and the selected model. Searching with the original query.');
+						}
 					}
 				}
 				replyToSearch({ type: 'translatedQuery', original: originalQuery, translated: query, rewriteKind: appliedRewrite });
 				replyToSearch({ type: 'status', message: 'Searching...' });
-				const serverPort = await resolveActiveServerPort();
-				if (serverPort === undefined) {
-					replyToSearch({ type: 'error', message: 'Failed to search. Make sure the server is running.' });
-					return;
-				}
 				try {
-					const res = await fetch(getServerUrl('/search_diff', serverPort), {
-						method: 'POST',
-						headers: { 'Content-Type': 'application/json' },
-						body: JSON.stringify({
-							directory: folderPath,
-							query,
-							top_k: 30,
-							file_ext: fileExt,
-							include_files: undefined,
-							include_globs: includeGlobs,
-							exclude_globs: excludeGlobs,
-							search_mode: searchMode,
-							scope: 'changed',
-							search_target: searchTarget,
-							diff_base_ref: diffBaseRef,
-							diff_head_ref: diffHeadRef,
-							branch_ref: branchRef,
-							first_parent: !!msg.firstParent,
-							recent_commit_limit: msg.recentCommitLimit === 100 ? 100 : 0,
-							branch_base_ref: validateGitRef(msg.branchBaseRef)
-						})
-					});
-					const data: any = await res.json();
-					if (!res.ok) {
-						throw new Error(data?.detail || `Search failed with HTTP ${res.status}`);
+					searchController.signal.throwIfAborted();
+					let data: any;
+					if (agenticEnabled) {
+						let lastData: any = {};
+						let generate: GenerateAgent | undefined;
+						const agent = await runAgenticSearch({
+							query: originalQuery, rewriteOptions,
+							model: normalizeGeminiModel(typeof msg.geminiModel === 'string' ? msg.geminiModel : queryConfig.get<string>('geminiModel', DEFAULT_GEMINI_MODEL)),
+							maxSearches: normalizeAgentSearchLimit(queryConfig.get<number>('agenticMaxSearches', 3)),
+							signal: searchController.signal,
+							generate: async request => {
+								if (!generate) {
+									const apiKey = queryConfig.get<string>('geminiApiKey', '');
+									if (!apiKey) {
+										throw new Error('Gemini API key is not configured.');
+									}
+									const { GoogleGenAI } = await import('@google/genai');
+									const ai = new GoogleGenAI({ apiKey });
+									generate = params => ai.models.generateContent(params);
+								}
+								return generate(request);
+							},
+							search: async (nextQuery, mode) => {
+								lastData = await searchOnce(nextQuery, mode);
+								if (lastData.cancelled) {
+									searchController.abort();
+									searchController.signal.throwIfAborted();
+								}
+								return Array.isArray(lastData.results) ? lastData.results : [];
+							},
+							onProgress: update => {
+								replyToSearch({ type: 'agentTrace', ...update });
+								replyToSearch({ type: 'status', message: update.status });
+							},
+							onDiagnostic: diagnostic => {
+								this._outputChannel?.appendLine(`[Agentic search] ${diagnostic.phase}/${diagnostic.code}: ${diagnostic.message}`);
+							},
+						});
+						data = { ...lastData, cancelled: false, results: agent.results };
+						replyToSearch({ type: 'agentTrace', ...agent, results: undefined });
+					} else {
+						data = await searchOnce(query, searchMode);
 					}
 					if (data?.cancelled) {
 						replyToSearch({ type: 'status', message: data.message || 'Indexing / embedding cancelled.' });
@@ -1354,7 +1425,7 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 						replyToSearch({ type: 'results', results: [], folderPath, meta });
 					}
 				} catch (error: any) {
-					replyToSearch({ type: 'error', message: error?.message || 'Failed to search. Make sure the server is running.' });
+					replyToSearch({ type: 'error', message: searchController.signal.aborted ? 'Search cancelled.' : error?.message || 'Failed to search. Make sure the server is running.' });
 				}
 			}
 			if (msg.command === 'openCommitDiff') {
@@ -1447,22 +1518,27 @@ class OwlDiffSearchSidebarProvider implements vscode.WebviewViewProvider {
 				void vscode.commands.executeCommand('owlDiffSearch.stopServer');
 			}
 			if (msg.command === 'cancelEmbedding') {
+                if (typeof msg.searchRequestId === 'string' && msg.searchRequestId !== this._activeSearchRequestId) {
+                    return;
+                }
+                const replyToCancel = (payload: Record<string, unknown>) => webviewView.webview.postMessage({ ...payload, searchRequestId: msg.searchRequestId || undefined });
+                this._searchController?.abort();
 				console.log('[OwlDiffSearch] cancelEmbedding command received from Webview');
-				webviewView.webview.postMessage({ type: 'status', message: 'Cancelling indexing / embedding...' });
+				replyToCancel({ type: 'status', message: 'Cancelling indexing / embedding...' });
 				const serverPort = await resolveActiveServerPort();
 				if (serverPort === undefined) {
-					webviewView.webview.postMessage({ type: 'error', message: 'Failed to cancel. Make sure the server is running.' });
+					replyToCancel({ type: 'error', message: 'Failed to cancel. Make sure the server is running.' });
 					return;
 				}
 				try {
 					const res = await fetch(getServerUrl('/cancel_embedding', serverPort), { method: 'POST' });
 					if (res.ok) {
-						webviewView.webview.postMessage({ type: 'status', message: 'Cancellation requested.' });
+						replyToCancel({ type: 'status', message: 'Cancellation requested.' });
 					} else {
-						webviewView.webview.postMessage({ type: 'error', message: `Failed to cancel: HTTP ${res.status}` });
+						replyToCancel({ type: 'error', message: `Failed to cancel: HTTP ${res.status}` });
 					}
 				} catch (error) {
-					webviewView.webview.postMessage({ type: 'error', message: 'Failed to cancel. Make sure the server is running.' });
+					replyToCancel({ type: 'error', message: 'Failed to cancel. Make sure the server is running.' });
 				}
 			}
 			if (msg.command === 'checkServerStatus') {

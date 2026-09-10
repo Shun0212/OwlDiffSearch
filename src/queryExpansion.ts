@@ -76,7 +76,7 @@ export function buildQueryRewriteInstruction(options: QueryRewriteOptions): stri
 	return rules.join('\n');
 }
 
-type QueryResponse = {
+export type QueryResponse = {
 	candidates?: { content?: { parts?: { text?: string; thought?: boolean }[] } }[];
 	text?: string;
 };
@@ -84,7 +84,7 @@ type QueryResponse = {
 export type GenerateQuery = (request: {
 	model: string;
 	contents: string;
-	config: { systemInstruction: string; httpOptions: { timeout: number } };
+	config: { systemInstruction: string; httpOptions: { timeout: number }; abortSignal?: AbortSignal; responseMimeType?: string };
 }) => Promise<QueryResponse>;
 
 export async function rewriteSearchQuery(

@@ -1255,3 +1255,38 @@ input[type="text"]::placeholder {
     grid-template-columns: 1fr;
   }
 }
+.agent-keyword-checks {
+  margin-top: 8px;
+  font-size: 12px;
+}
+.agent-keyword-checks summary {
+  cursor: pointer;
+}
+.agent-keyword-checks pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  padding: 6px;
+  background: var(--vscode-editor-background);
+}
+.result-sort-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0;
+}
+.result-sort-controls[hidden] {
+  display: none;
+}
+.result-sort-controls select {
+  flex: 1;
+  min-width: 0;
+}
+.result-change-summary {
+  margin-top: 6px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.result-relevance-reason {
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}

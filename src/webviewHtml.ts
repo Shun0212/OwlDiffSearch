@@ -243,6 +243,11 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
               <span>Expand query with Gemini</span>
             </label>
             <div class="translation-note">Generate an English search query suited to the search mode. Includes translation. Keyword search uses your original input.</div>
+            <label class="translation-toggle">
+              <input type="checkbox" id="agenticSearchToggle">
+              <span>Agentic search with Gemini</span>
+            </label>
+            <div class="translation-note">Gemini can run search and keyword lookup tools itself, then inspect matching lines to verify results. Sends result titles, paths and diff excerpts to Gemini. Uses up to 3 searches by default; overrides the translation and expansion options above.</div>
             <select id="geminiModelSelect" title="Gemini query model">
               ${GEMINI_MODELS.map(model => `<option value="${model}">${model}</option>`).join('')}
             </select>
@@ -269,7 +274,18 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
       <button id="cancelEmbeddingBtn" class="secondary-action compact-action" type="button" hidden>Cancel</button>
     </div>
     <div id="translatedQuery" class="translated-query" hidden></div>
+    <details id="agentTrace" class="translated-query" hidden open>
+      <summary>Agentic search</summary>
+      <div id="agentTraceContent" aria-live="polite"></div>
+    </details>
 
+    <div id="resultSortControls" class="result-sort-controls" hidden>
+      <label for="resultSortSelect">Sort results</label>
+      <select id="resultSortSelect">
+        <option value="relevance">Relevance (Gemini)</option>
+        <option value="retrieval">Search ranking</option>
+      </select>
+    </div>
     <div class="results" id="results">
       <div class="empty-state" id="emptyState">
         <img src="${options.owlPngUri}" alt="" class="empty-owl">

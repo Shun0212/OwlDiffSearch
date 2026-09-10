@@ -2,6 +2,7 @@
   const vscode = acquireVsCodeApi();
   const sessionId = String(window.OWL_WEBVIEW_SESSION_ID || '');
   let currentResults = [];
+  let currentResultsMeta = {};
   let currentFolderPath = '';
   let commitGraphData = [];
   let commitGraphHasMore = true;
@@ -26,17 +27,22 @@
     const busy = searchInFlight || activePrepareRequestId !== null;
     if (byId('searchBtn')) byId('searchBtn').disabled = busy;
     if (byId('refreshDiffSearchBtn')) byId('refreshDiffSearchBtn').disabled = busy;
+    if (byId('resultSortSelect')) byId('resultSortSelect').disabled = busy;
   }
 
   function invalidateSearch() {
+    if (searchInFlight && activeSearchRequestId) vscode.postMessage({ command: 'cancelSearch', searchRequestId: activeSearchRequestId });
     activeSearchRequestId = null;
     activePrepareRequestId = null;
     searchInFlight = false;
     progressWasActive = false;
     currentResults = [];
+    currentResultsMeta = {};
+    if (byId('resultSortControls')) byId('resultSortControls').hidden = true;
     const results = byId('results');
     if (results) results.innerHTML = '<div class="empty-state" id="emptyState"><div class="empty-title">Search conditions changed</div><div class="empty-hint">Search again to see results for these conditions.</div></div>';
     if (byId('translatedQuery')) byId('translatedQuery').hidden = true;
+    if (byId('agentTrace')) byId('agentTrace').hidden = true;
     if (byId('branchSearchSummary')) byId('branchSearchSummary').textContent = '';
     if (byId('diffStatus')) byId('diffStatus').textContent = '';
     setStatus('', false);
@@ -119,9 +125,9 @@
 
   function translationText() {
     const settings = translationSettings();
-    if (!settings.enable && !settings.expand) return 'Off';
+    if (!settings.enable && !settings.expand && !settings.agentic) return 'Off';
     const model = settings.model.replace(/^gemini-/, '');
-    return `${settings.expand ? 'Expand' : 'JA→EN'} · ${model}`;
+    return `${settings.agentic ? 'Agentic' : settings.expand ? 'Expand' : 'JA→EN'} · ${model}`;
   }
 
   function updateSettingsStateSummary() {
@@ -131,11 +137,12 @@
     const noDocs = byId('excludeDocumentationToggle')?.checked ? 'on' : 'off';
     const translation = translationSettings().enable ? 'on' : 'off';
     const expansion = translationSettings().expand ? 'on' : 'off';
+    const agentic = translationSettings().agentic ? ' · Agentic on' : '';
     const branchName = byId('settingsBranchName');
     const toggles = byId('settingsToggleSummary');
-    const value = `${branch} · No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}`;
+    const value = `${branch} · No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}${agentic}`;
     if (branchName) branchName.textContent = branch;
-    if (toggles) toggles.textContent = `No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}`;
+    if (toggles) toggles.textContent = `No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}${agentic}`;
     summary.style.setProperty('--settings-branch-color', branchColor(branch));
     summary.title = value;
   }
@@ -283,7 +290,7 @@
       if (progressWasActive) {
         progressWasActive = false;
         const rankingUnit = isBranchSearch() ? 'branches' : byId('searchTargetSelect')?.value === 'diff_commits' ? 'commit file diffs' : 'diff hunks';
-        setStatus(searchInFlight ? `Ranking ${rankingUnit}…` : '', false);
+        setStatus(searchInFlight ? `Ranking ${rankingUnit}…` : '', searchInFlight);
       } else if (cancel && !searchInFlight) {
         cancel.hidden = true;
       }
@@ -371,6 +378,7 @@
     return {
       enable: Boolean(byId('translateToggle')?.checked),
       expand: Boolean(byId('queryExpansionToggle')?.checked),
+      agentic: Boolean(byId('agenticSearchToggle')?.checked),
       model: byId('geminiModelSelect')?.value || 'gemini-3.8-flash',
     };
   }
@@ -809,6 +817,8 @@
       return;
     }
     searchInFlight = true;
+    if (byId('agentTrace')) byId('agentTrace').hidden = true;
+    if (byId('translatedQuery')) byId('translatedQuery').hidden = true;
     activeSearchRequestId = `${sessionId}:search:${++searchSequence}`;
     updateSearchAvailability();
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
@@ -833,6 +843,7 @@
       firstParent: commitTraversal === 'first_parent',
       translateEnabled: translation.enable,
       expandEnabled: translation.expand,
+      agenticEnabled: translation.agentic,
       recentCommitLimit: recentCommitLimit(),
       geminiModel: translation.model,
     });
@@ -896,13 +907,26 @@
     return parts.join(' · ');
   }
 
+  function sortResultsForDisplay(results, order) {
+    const score = result => Number.isInteger(result.agent_relevance) && result.agent_relevance >= 0 && result.agent_relevance <= 100
+      ? result.agent_relevance : -1;
+    return [...results].sort((a, b) => {
+      if (order === 'retrieval') return (a.agent_retrieval_rank ?? a.rank ?? 0) - (b.agent_retrieval_rank ?? b.rank ?? 0);
+      return score(b) - score(a) || (a.rank ?? 0) - (b.rank ?? 0);
+    });
+  }
+
   function renderResults(results, folderPath, meta) {
     searchInFlight = false;
     progressWasActive = false;
     activeSearchRequestId = null;
     updateSearchAvailability();
     updateBranchSearchSummary(meta);
-    currentResults = Array.isArray(results) ? results : [];
+    currentResultsMeta = meta || {};
+    const incoming = Array.isArray(results) ? results : [];
+    const isAgentic = incoming.some(result => result.agent_result_id);
+    currentResults = isAgentic ? sortResultsForDisplay(incoming, byId('resultSortSelect')?.value || 'relevance') : incoming;
+    if (byId('resultSortControls')) byId('resultSortControls').hidden = !isAgentic;
     currentFolderPath = folderPath || currentFolderPath;
     const container = byId('results');
     if (!container) return;
@@ -943,6 +967,7 @@
         bm25: 'Normalized BM25 score',
       }[result.search_mode] || 'Match score';
       const context = resultContext(result, isCommitDiff);
+      const assessed = Number.isInteger(result.agent_relevance) && result.agent_relevance >= 0 && result.agent_relevance <= 100;
       card.innerHTML =
         '<div class="result-header">' +
         `<span class="result-rank${index < 3 ? ' rank-top' : ''}">${index + 1}</span>` +
@@ -950,8 +975,45 @@
         `<div class="function-name">${escapeHtml(resultTitle(result, file, line))}</div>` +
         (context ? `<div class="result-context">${escapeHtml(context)}</div>` : '') +
         '</div>' +
-        (result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="${scoreTitle}">${score}</span>`) +
+        (result.agent_result_id ? `<span class="score-badge" title="Gemini relevance estimate from observed diffs; not a probability">${assessed ? `Relevance ${result.agent_relevance}/100` : 'Not assessed'}</span>` : result.keyword_match ? '<span class="score-badge" title="All keywords matched">Match</span>' : score === null ? '' : `<span class="score-badge" title="${scoreTitle}">${score}</span>`) +
         '</div>';
+      if (result.agent_change_summary) {
+        const summary = document.createElement('div');
+        summary.className = 'result-change-summary';
+        summary.textContent = result.agent_change_summary;
+        card.appendChild(summary);
+      }
+      if (result.agent_relevance_reason) {
+        const explanation = document.createElement('div');
+        explanation.className = 'result-context result-relevance-reason';
+        explanation.textContent = `Why: ${result.agent_relevance_reason}`;
+        card.appendChild(explanation);
+      }
+      if (Array.isArray(result.agent_queries)) {
+        const evidence = document.createElement('div');
+        evidence.className = 'result-context';
+        evidence.textContent = `Found via: ${result.agent_queries.join(' · ')}`;
+        card.appendChild(evidence);
+      }
+      if (Array.isArray(result.agent_keyword_checks) && result.agent_keyword_checks.length) {
+        const checks = document.createElement('details');
+        checks.className = 'agent-keyword-checks';
+        checks.addEventListener('click', event => event.stopPropagation());
+        const label = document.createElement('summary');
+        label.textContent = `Keyword hits (${result.agent_keyword_checks.length})`;
+        checks.appendChild(label);
+        result.agent_keyword_checks.forEach(check => {
+          const title = document.createElement('div');
+          title.textContent = `${check.query} · ${check.path}`;
+          checks.appendChild(title);
+          (check.excerpts || []).forEach(excerpt => {
+            const code = document.createElement('pre');
+            code.textContent = `Diff line ${excerpt.diffLine}\n${excerpt.text}`;
+            checks.appendChild(code);
+          });
+        });
+        card.appendChild(checks);
+      }
 
       const openPrimaryDiff = () => {
         if (hasCommitDiff) {
@@ -1051,9 +1113,12 @@
 
   function bindEvents() {
     bindSegmentedControls();
+    byId('resultSortSelect')?.addEventListener('change', () => {
+      if (!searchInFlight) renderResults(currentResults, currentFolderPath, currentResultsMeta);
+    });
     byId('setupAndStartBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'setupAndStart' }));
     byId('stopServerBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'stopServer' }));
-    byId('cancelEmbeddingBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'cancelEmbedding' }));
+    byId('cancelEmbeddingBtn')?.addEventListener('click', () => vscode.postMessage({ command: 'cancelEmbedding', searchRequestId: activeSearchRequestId }));
     byId('searchBtn')?.addEventListener('click', runSearch);
     byId('searchInput')?.addEventListener('keydown', (event) => {
       if (event.key === 'Enter') runSearch();
@@ -1148,13 +1213,18 @@
       updateTranslationSummary();
       updateTranslationSettings({ expand: Boolean(byId('queryExpansionToggle').checked) });
     });
+    byId('agenticSearchToggle')?.addEventListener('change', () => {
+      invalidateSearch();
+      updateTranslationSummary();
+      updateTranslationSettings({ agentic: Boolean(byId('agenticSearchToggle').checked) });
+    });
   }
 
   window.addEventListener('message', (event) => {
     const message = event.data || {};
     if (typeof message.searchRequestId === 'string' && message.searchRequestId !== activeSearchRequestId) return;
     if (typeof message.prepareRequestId === 'string' && message.prepareRequestId !== activePrepareRequestId) return;
-    if (['results', 'translatedQuery'].includes(message.type) && message.searchRequestId !== activeSearchRequestId) return;
+    if (['results', 'translatedQuery', 'agentTrace'].includes(message.type) && message.searchRequestId !== activeSearchRequestId) return;
     if (['diffPrepared', 'diffPrepareError'].includes(message.type) && message.prepareRequestId !== activePrepareRequestId) return;
     if (message.type === 'initState') {
       restoreState(message.state);
@@ -1165,9 +1235,11 @@
       if (typeof message.requestId === 'number' && message.requestId < translationRequestId) return;
       const toggle = byId('translateToggle');
       const expansion = byId('queryExpansionToggle');
+      const agentic = byId('agenticSearchToggle');
       const model = byId('geminiModelSelect');
       if (toggle) toggle.checked = Boolean(message.enable);
       if (expansion) expansion.checked = Boolean(message.expand);
+      if (agentic) agentic.checked = Boolean(message.agentic);
       if (model && typeof message.model === 'string') model.value = message.model;
       updateTranslationSummary();
       return;
@@ -1176,6 +1248,25 @@
       if (typeof message.requestId === 'number' && message.requestId < translationRequestId) return;
       setStatus(message.message || 'Failed to save Gemini settings.', false);
       vscode.postMessage({ command: 'requestTranslationSettings' });
+      return;
+    }
+    if (message.type === 'agentTrace') {
+      const trace = byId('agentTrace');
+      const content = byId('agentTraceContent');
+      if (!trace || !content) return;
+      trace.hidden = false;
+      const steps = Array.isArray(message.steps) ? message.steps : [];
+      content.innerHTML = (steps.length ? '<ol>' + steps.map(step =>
+        `<li><strong>${escapeHtml(step.tool || step.mode)}: ${escapeHtml(step.query)}</strong> — ${step.status === 'complete' ? `${Number(step.resultCount) || 0} results` : escapeHtml(step.status || '')}<br>${escapeHtml(step.reason || '')}</li>`
+      ).join('') + '</ol>' : '') + `<p>${escapeHtml(message.summary || message.status || '')}</p>`;
+      if (Array.isArray(message.warnings) && message.warnings.length) {
+        content.innerHTML += '<ul>' + message.warnings.map(warning => `<li>${escapeHtml(warning)}</li>`).join('') + '</ul>';
+      }
+      if (Array.isArray(message.diagnostics) && message.diagnostics.length) {
+        content.innerHTML += '<details><summary>Diagnostics</summary><ul>' + message.diagnostics.map(item =>
+          `<li>${escapeHtml(item.phase)} / ${escapeHtml(item.code)}: ${escapeHtml(item.message)}</li>`
+        ).join('') + '</ul></details>';
+      }
       return;
     }
     if (message.type === 'translatedQuery') {
@@ -1250,7 +1341,7 @@
     if (message.type === 'status') {
       const statusMessage = message.message || '';
       const finished = /cancelled|completed|failed|ready/i.test(statusMessage);
-      const busy = !finished && /searching|expanding|translating|indexing|embedding|setting up|starting|checking|cancelling|cancellation requested/i.test(statusMessage);
+      const busy = !finished && /agent|searching|expanding|translating|indexing|embedding|setting up|starting|checking|cancelling|cancellation requested/i.test(statusMessage);
       setStatus(statusMessage, busy);
       return;
     }
