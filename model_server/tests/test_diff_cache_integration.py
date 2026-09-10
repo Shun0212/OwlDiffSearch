@@ -438,6 +438,9 @@ class DiffEmbeddingCacheIntegrationTests(unittest.TestCase):
             self.assertEqual(prepared["num_diff_commits"], 1)
             self.assertEqual(state.units[0]["commit_hash"], python_commit)
             self.assertEqual(state.units[0]["commit_files"], ["sample.py"])
+            # BM25 must not retrieve the excluded JavaScript diff or commit text.
+            self.assertEqual(server.commit_bm25_search_scores(state.units, "ready JavaScript"), {})
+            self.assertTrue(server.commit_bm25_search_scores(state.units, "changed"))
 
     def test_prepare_indexes_each_hunk_and_reuses_it_after_state_reset(self):
         with tempfile.TemporaryDirectory() as root:

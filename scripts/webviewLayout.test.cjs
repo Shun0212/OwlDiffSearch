@@ -118,7 +118,7 @@ test('consolidates low-frequency controls behind one Settings item', () => {
   assert.match(htmlBuilder, /id="settingsToggleSummary">No docs on · JA→EN off</);
   assert.match(htmlBuilder, />Target filters</);
   assert.match(htmlBuilder, />Compare range</);
-  assert.match(htmlBuilder, />Japanese-to-English translation</);
+  assert.match(htmlBuilder, />Gemini query preparation</);
   assert.doesNotMatch(htmlBuilder, /class="option-panel target-filter-panel"/);
   assert.doesNotMatch(htmlBuilder, /class="option-panel diff-range-panel"/);
   assert.doesNotMatch(htmlBuilder, /class="option-panel translation-settings"/);

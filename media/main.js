@@ -119,9 +119,9 @@
 
   function translationText() {
     const settings = translationSettings();
-    if (!settings.enable) return 'Off';
+    if (!settings.enable && !settings.expand) return 'Off';
     const model = settings.model.replace(/^gemini-/, '');
-    return `On · ${model}`;
+    return `${settings.expand ? 'Expand' : 'JA→EN'} · ${model}`;
   }
 
   function updateSettingsStateSummary() {
@@ -130,11 +130,12 @@
     const branch = isBranchSearch() ? 'Find branches' : (commitBranchFilter || 'All branches');
     const noDocs = byId('excludeDocumentationToggle')?.checked ? 'on' : 'off';
     const translation = translationSettings().enable ? 'on' : 'off';
+    const expansion = translationSettings().expand ? 'on' : 'off';
     const branchName = byId('settingsBranchName');
     const toggles = byId('settingsToggleSummary');
-    const value = `${branch} · No docs ${noDocs} · JA→EN ${translation}`;
+    const value = `${branch} · No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}`;
     if (branchName) branchName.textContent = branch;
-    if (toggles) toggles.textContent = `No docs ${noDocs} · JA→EN ${translation}`;
+    if (toggles) toggles.textContent = `No docs ${noDocs} · JA→EN ${translation} · Expand ${expansion}`;
     summary.style.setProperty('--settings-branch-color', branchColor(branch));
     summary.title = value;
   }
@@ -369,7 +370,8 @@
   function translationSettings() {
     return {
       enable: Boolean(byId('translateToggle')?.checked),
-      model: byId('geminiModelSelect')?.value || 'gemini-3.5-flash',
+      expand: Boolean(byId('queryExpansionToggle')?.checked),
+      model: byId('geminiModelSelect')?.value || 'gemini-3.8-flash',
     };
   }
 
@@ -810,7 +812,7 @@
     activeSearchRequestId = `${sessionId}:search:${++searchSequence}`;
     updateSearchAvailability();
     const searchTarget = byId('searchTargetSelect')?.value || 'diff_hunks';
-    setStatus(isBranchSearch() ? 'Searching branches by their changes…' : searchTarget === 'diff_commits' ? 'Searching commit file diffs…' : 'Searching diff hunks…', true);
+    setStatus(isBranchSearch() ? 'Searching branches by their changes…' : searchTarget === 'diff_commits' ? 'Searching commit diffs…' : 'Searching diff hunks…', true);
     byId('emptyState')?.setAttribute('hidden', '');
     const translation = translationSettings();
     vscode.postMessage({
@@ -830,6 +832,7 @@
       branchRef: commitBranchFilter,
       firstParent: commitTraversal === 'first_parent',
       translateEnabled: translation.enable,
+      expandEnabled: translation.expand,
       recentCommitLimit: recentCommitLimit(),
       geminiModel: translation.model,
     });
@@ -884,7 +887,7 @@
     const parts = [];
     if (result.commit_hash) parts.push(shortRef(result.commit_hash));
     if (result.scored_file_path) {
-      const fileLabel = result.commit_score_aggregation === 'first_matching_file' ? 'Matched file' : 'Best match';
+      const fileLabel = result.commit_score_aggregation === 'whole_commit' ? 'Preview file' : result.commit_score_aggregation === 'first_matching_file' ? 'Matched file' : 'Best match';
       parts.push(`${fileLabel}: ${result.scored_file_path}`);
     }
     if (Number.isFinite(result.commit_file_count)) {
@@ -1001,7 +1004,7 @@
           fileButton.type = 'button';
           fileButton.className = `diff-commit-hunk-head${entry.is_representative ? ' representative' : ''}`;
           const entryPath = entry.path || relativePath(entry.file_path || file);
-          const representativeLabel = result.commit_score_aggregation === 'first_matching_file'
+          const representativeLabel = result.commit_score_aggregation === 'whole_commit' ? 'Preview file' : result.commit_score_aggregation === 'first_matching_file'
             ? 'Matched file'
             : 'Best match';
           fileButton.textContent = entry.is_representative ? `${representativeLabel} · ${entryPath}` : entryPath;
@@ -1140,6 +1143,11 @@
       updateTranslationSummary();
       updateTranslationSettings({ model: byId('geminiModelSelect').value });
     });
+    byId('queryExpansionToggle')?.addEventListener('change', () => {
+      invalidateSearch();
+      updateTranslationSummary();
+      updateTranslationSettings({ expand: Boolean(byId('queryExpansionToggle').checked) });
+    });
   }
 
   window.addEventListener('message', (event) => {
@@ -1154,18 +1162,27 @@
       return;
     }
     if (message.type === 'translationSettings') {
+      if (typeof message.requestId === 'number' && message.requestId < translationRequestId) return;
       const toggle = byId('translateToggle');
+      const expansion = byId('queryExpansionToggle');
       const model = byId('geminiModelSelect');
       if (toggle) toggle.checked = Boolean(message.enable);
+      if (expansion) expansion.checked = Boolean(message.expand);
       if (model && typeof message.model === 'string') model.value = message.model;
       updateTranslationSummary();
+      return;
+    }
+    if (message.type === 'translationSettingsError') {
+      if (typeof message.requestId === 'number' && message.requestId < translationRequestId) return;
+      setStatus(message.message || 'Failed to save Gemini settings.', false);
+      vscode.postMessage({ command: 'requestTranslationSettings' });
       return;
     }
     if (message.type === 'translatedQuery') {
       const translated = byId('translatedQuery');
       if (!translated) return;
       if (message.original && message.translated && message.original !== message.translated) {
-        translated.innerHTML = `Translated: <strong>${escapeHtml(message.translated)}</strong>`;
+        translated.innerHTML = `${message.rewriteKind === 'expanded' ? 'Expanded query' : 'Translated'}: <strong>${escapeHtml(message.translated)}</strong>`;
         translated.hidden = false;
       } else {
         translated.hidden = true;
@@ -1233,7 +1250,7 @@
     if (message.type === 'status') {
       const statusMessage = message.message || '';
       const finished = /cancelled|completed|failed|ready/i.test(statusMessage);
-      const busy = !finished && /searching|indexing|embedding|setting up|starting|checking|cancelling|cancellation requested/i.test(statusMessage);
+      const busy = !finished && /searching|expanding|translating|indexing|embedding|setting up|starting|checking|cancelling|cancellation requested/i.test(statusMessage);
       setStatus(statusMessage, busy);
       return;
     }

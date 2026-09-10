@@ -867,6 +867,32 @@ def bm25_search_scores(units: list[dict], query: str) -> dict[int, float]:
     return _bm25_scores(documents, query)
 
 
+def commit_bm25_search_scores(units: list[dict], query: str) -> dict[int, float]:
+    """Score one document per commit using the same filtered text as embeddings.
+
+    Broadcast each commit score to its file units so Hybrid combines it with
+    the commit's maximum file cosine. Document frequency and length statistics
+    count commits, never files. Commit metadata is deliberately excluded.
+    """
+    documents: list[list[str]] = []
+    commit_indices: dict[str, int] = {}
+    unit_to_document: list[int] = []
+    for unit in units:
+        key = commit_result_key(unit)
+        if key not in commit_indices:
+            commit_indices[key] = len(documents)
+            documents.append([])
+        index = commit_indices[key]
+        documents[index].extend(tokenize_for_bm25(str(unit.get("search_text") or "")))
+        unit_to_document.append(index)
+    scores = _bm25_scores(documents, query)
+    return {
+        unit_index: scores[document_index]
+        for unit_index, document_index in enumerate(unit_to_document)
+        if document_index in scores
+    }
+
+
 def keyword_search_matches(units: list[dict], query: str) -> dict[int, list[str]]:
     keywords = [keyword.strip() for keyword in query.split() if keyword.strip()]
     if not keywords:
@@ -1251,6 +1277,12 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
             "search_mode": search_mode,
             "search_unit": "diff_commit" if search_target == "diff_commits" else "diff_hunk",
         })
+        if search_target == "diff_commits" and search_mode in {"bm25", "hybrid"}:
+            item["bm25_score_unit"] = "commit_diff"
+            item["score_unit"] = "commit_diff"
+            item["commit_score_aggregation"] = (
+                "whole_commit" if search_mode == "bm25" else "max_file_semantic_plus_commit_bm25"
+            )
         if extra:
             item.update(extra)
         return item
@@ -1308,7 +1340,11 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
                 semantic_distances[int(idx)] = 1.0 - score
 
     if search_mode in {"bm25", "hybrid"}:
-        raw_bm25 = bm25_search_scores(units, req.query)
+        raw_bm25 = (
+            commit_bm25_search_scores(units, req.query)
+            if search_target == "diff_commits"
+            else bm25_search_scores(units, req.query)
+        )
     else:
         raw_bm25 = {}
     normalized_bm25 = normalize_scores(raw_bm25)
@@ -1318,7 +1354,7 @@ def search_diff_hunks(req: SearchFunctionsSimpleRequest) -> dict:
         candidate_indices.update(semantic_scores)
     if search_mode in {"bm25", "hybrid"}:
         candidate_indices.update(normalized_bm25)
-    if not candidate_indices and search_target != "diff_branches":
+    if not candidate_indices and search_mode != "bm25" and search_target != "diff_branches":
         candidate_indices.update(range(len(units)))
 
     ranked = []

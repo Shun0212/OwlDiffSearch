@@ -125,22 +125,29 @@
         "owlDiffSearch.enableJapaneseTranslation": {
           "type": "boolean",
           "default": false,
-          "description": "Translate Japanese queries to English with Gemini before semantic search."
+          "description": "Translate Japanese queries to English with Gemini before Semantic, Hybrid or BM25 search. Query expansion includes translation when enabled."
+        },
+        "owlDiffSearch.enableQueryExpansion": {
+          "type": "boolean",
+          "default": false,
+          "description": "Use Gemini to rewrite queries into English search descriptions suited to the search mode and embedding model. Includes translation; disabled for Keyword search."
         },
         "owlDiffSearch.geminiApiKey": {
           "type": "string",
           "default": "",
-          "description": "Gemini API key used only when Japanese query translation is enabled."
+          "description": "Gemini API key used for query translation and expansion."
         },
         "owlDiffSearch.geminiModel": {
           "type": "string",
-          "default": "gemini-3.5-flash",
+          "default": "gemini-3.8-flash",
           "enum": [
+            "gemini-3.8-flash",
+            "gemini-3.5-flash-lite",
+            "gemini-3.1-pro-preview",
             "gemini-3.5-flash",
-            "gemini-3.1-flash-lite",
-            "gemini-3.1-pro-preview"
+            "gemini-3.1-flash-lite"
           ],
-          "description": "Gemini model used for Japanese query translation."
+          "description": "Gemini model used for query translation and expansion. Defaults to Gemini 3.8 Flash (latest stable Flash verified September 10, 2026)."
         },
         "owlDiffSearch.serverHost": {
           "type": "string",

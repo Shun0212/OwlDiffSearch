@@ -1,3 +1,5 @@
+import { GEMINI_MODELS } from './queryExpansion';
+
 type WebviewHtmlOptions = {
 	cspSource: string;
 	nonce: string;
@@ -229,17 +231,20 @@ export function buildDiffSearchWebviewHtml(options: WebviewHtmlOptions): string 
 
           <section class="settings-group translation-body" aria-labelledby="translationSettingsHeading">
             <div class="settings-group-heading" id="translationSettingsHeading">
-              <span>Japanese-to-English translation</span>
+              <span>Gemini query preparation</span>
               <span class="option-summary" id="translationSummary">Off</span>
             </div>
             <label class="translation-toggle">
               <input type="checkbox" id="translateToggle">
               <span>Translate JP → EN with Gemini</span>
             </label>
-            <select id="geminiModelSelect" title="Gemini translation model">
-              <option value="gemini-3.5-flash">Gemini 3.5 Flash</option>
-              <option value="gemini-3.1-flash-lite">Gemini 3.1 Flash-Lite</option>
-              <option value="gemini-3.1-pro-preview">Gemini 3.1 Pro Preview</option>
+            <label class="translation-toggle">
+              <input type="checkbox" id="queryExpansionToggle">
+              <span>Expand query with Gemini</span>
+            </label>
+            <div class="translation-note">Generate an English search query suited to the search mode. Includes translation. Keyword search uses your original input.</div>
+            <select id="geminiModelSelect" title="Gemini query model">
+              ${GEMINI_MODELS.map(model => `<option value="${model}">${model}</option>`).join('')}
             </select>
             <div class="translation-note">Set <code>owlDiffSearch.geminiApiKey</code> in VS Code Settings.</div>
           </section>
