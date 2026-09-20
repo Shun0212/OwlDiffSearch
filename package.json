@@ -191,6 +191,7 @@
     "test:extension": "vscode-test"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@types/mocha": "^10.0.10",
     "@types/node": "20.x",
     "@types/vscode": "^1.100.0",
@@ -203,6 +204,11 @@
     "typescript": "^5.8.3"
   },
   "dependencies": {
-    "@google/genai": "^1.4.0"
+    "@google/genai": "^1.52.0"
+  },
+  "overrides": {
+    "mocha": {
+      "serialize-javascript": "^7.0.5"
+    }
   }
 }

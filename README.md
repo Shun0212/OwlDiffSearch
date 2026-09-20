@@ -176,6 +176,8 @@ npm run watch
 
 `git clone` だけでは依存パッケージはインストールされません。`npm ci --include=dev` を実行して `package-lock.json` に基づく TypeScript などの開発用パッケージをインストールしてください（`node_modules` は Git 管理外のため、このコマンドで復元されます）。
 
+依存関係は OwlSpotLight に合わせ、Gemini SDK 1.52 系と、その型定義が参照する `@modelcontextprotocol/sdk`（開発用）を使用しています。Mocha 配下の `serialize-javascript` は脆弱性修正版の `^7.0.5` を `overrides` で指定しています。間接依存の非推奨警告は残るため、脆弱性の有無は `npm audit --include=dev` で別途確認してください。
+
 `Found 0 errors. Watching for file changes.` と表示されれば準備完了です。`watch` はファイルの変更を監視して自動で再コンパイルを行います（終了時は `Ctrl+C`）。
 
 VS Code 上で拡張機能をデバッグする場合は、依存関係のインストール後に `F5`（`Run Extension`）キーを押してください。デバッグ起動時に `watch` タスクが自動実行されるため、手動で `npm run watch` を立ち上げる必要はありません。
