@@ -664,10 +664,7 @@
         `<span class="commit-subject">${escapeHtml(commit.subject)}</span>` +
         `<span class="commit-meta">${escapeHtml(commit.date)}</span>`;
       row.addEventListener('click', (event) => {
-        const input = byId(event.shiftKey ? 'diffHeadRefInput' : 'diffBaseRefInput');
-        if (!input) return;
-        input.value = input.value === commit.hash ? '' : commit.hash;
-        input.dispatchEvent(new Event('change', { bubbles: true }));
+        selectCommitRange(commit.hash, event.shiftKey);
       });
       rows.appendChild(row);
     });
@@ -700,6 +697,19 @@
     container.appendChild(footer);
     container.scrollTop = previousScrollTop;
     highlightCommitSelection();
+  }
+
+  function selectCommitRange(hash, isHead) {
+    const input = byId(isHead ? 'diffHeadRefInput' : 'diffBaseRefInput');
+    if (!input) return;
+    // A branch filter overrides To in both the UI and the search request.
+    // Explicitly choosing To must release that override, including a saved To.
+    const releaseBranch = Boolean(isHead && commitBranchFilter);
+    if (releaseBranch) commitBranchFilter = '';
+    input.value = !releaseBranch && input.value === hash ? '' : hash;
+    if (releaseBranch) updateTreeFilterControls();
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    if (releaseBranch) requestGitCommits();
   }
 
   function matchesRef(ref, hash) {
